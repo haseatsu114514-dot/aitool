@@ -1199,6 +1199,25 @@ body.is-compact .session-card {
   padding-bottom: 20px;
 }
 
+.species-chip {
+  display: none;
+  position: absolute;
+  right: -4px;
+  top: -2px;
+  z-index: 2;
+  min-width: 24px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: rgba(13, 20, 40, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #f4f7ff;
+  font-size: 0.52rem;
+  line-height: 1;
+  text-align: center;
+  font-family: "DotGothic16", sans-serif;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+}
+
 body.is-compact .resident {
   gap: 10px;
 }
@@ -2287,6 +2306,13 @@ body.is-auto-compact .resident-avatar {
   min-width: 36px;
 }
 
+body.is-compact .species-chip,
+body.is-auto-compact .species-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 body.is-compact .resident-head,
 body.is-auto-compact .resident-head {
   width: 32px;
@@ -2359,4 +2385,99 @@ body.is-auto-compact .session-card[data-mood="rest"] .resident-head .pet-face::a
   left: 14px;
   width: 6px;
   border-bottom-width: 2px;
+}
+
+body.is-compact .session-card[data-species="hamster"] .resident-head .pet-antenna,
+body.is-auto-compact .session-card[data-species="hamster"] .resident-head .pet-antenna {
+  display: block;
+  top: -9px;
+  width: 3px;
+  height: 10px;
+  margin-left: -1.5px;
+}
+
+body.is-compact .session-card[data-species="hamster"] .resident-head .pet-antenna::before,
+body.is-auto-compact .session-card[data-species="hamster"] .resident-head .pet-antenna::before {
+  top: -5px;
+  left: -3px;
+  width: 10px;
+  height: 10px;
+  border-width: 2px;
+}
+
+body.is-compact .session-card[data-species="cat"] .resident-head::before,
+body.is-compact .session-card[data-species="cat"] .resident-head::after,
+body.is-auto-compact .session-card[data-species="cat"] .resident-head::before,
+body.is-auto-compact .session-card[data-species="cat"] .resident-head::after {
+  display: block;
+  top: -7px;
+  width: 9px;
+  height: 12px;
+  border-width: 2px;
+  border-radius: 3px 10px 2px 2px;
+}
+
+body.is-compact .session-card[data-species="cat"] .resident-head::before,
+body.is-auto-compact .session-card[data-species="cat"] .resident-head::before {
+  left: 3px;
+  transform: rotate(-28deg);
+}
+
+body.is-compact .session-card[data-species="cat"] .resident-head::after,
+body.is-auto-compact .session-card[data-species="cat"] .resident-head::after {
+  right: 3px;
+  transform: rotate(28deg);
+}
+
+body.is-compact .session-card[data-species="rabbit"] .resident-head,
+body.is-auto-compact .session-card[data-species="rabbit"] .resident-head {
+  border-radius: 48% 48% 44% 44% / 60% 60% 38% 38%;
+}
+
+body.is-compact .session-card[data-species="rabbit"] .resident-head::before,
+body.is-compact .session-card[data-species="rabbit"] .resident-head::after,
+body.is-auto-compact .session-card[data-species="rabbit"] .resident-head::before,
+body.is-auto-compact .session-card[data-species="rabbit"] .resident-head::after {
+  display: block;
+  top: -14px;
+  width: 7px;
+  height: 18px;
+  border-width: 2px;
+  border-radius: 8px 8px 4px 4px;
+}
+
+body.is-compact .session-card[data-species="rabbit"] .resident-head::before,
+body.is-auto-compact .session-card[data-species="rabbit"] .resident-head::before {
+  left: 7px;
+  transform: rotate(-8deg);
+}
+
+body.is-compact .session-card[data-species="rabbit"] .resident-head::after,
+body.is-auto-compact .session-card[data-species="rabbit"] .resident-head::after {
+  right: 7px;
+  transform: rotate(8deg);
+}
+
+body.is-compact .session-card[data-species="bear"] .resident-head::before,
+body.is-compact .session-card[data-species="bear"] .resident-head::after,
+body.is-auto-compact .session-card[data-species="bear"] .resident-head::before,
+body.is-auto-compact .session-card[data-species="bear"] .resident-head::after {
+  display: block;
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  border-width: 2px;
+  border-radius: 50%;
+}
+
+body.is-compact .session-card[data-species="bear"] .resident-head::before,
+body.is-auto-compact .session-card[data-species="bear"] .resident-head::before {
+  left: 1px;
+  transform: none;
+}
+
+body.is-compact .session-card[data-species="bear"] .resident-head::after,
+body.is-auto-compact .session-card[data-species="bear"] .resident-head::after {
+  right: 1px;
+  transform: none;
 }

@@ -53,6 +53,13 @@ let noticeFeed = [];
 const speciesAssignments = new Map();
 const notificationSessions = new Map();
 
+const SPECIES_LABELS = {
+  hamster: "ハム",
+  cat: "猫",
+  rabbit: "うさ",
+  bear: "くま",
+};
+
 function clampText(value, maxLength = 68) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   if (text.length <= maxLength) {
@@ -877,6 +884,10 @@ function cardHoverDetail(session) {
   return lines.join("\n");
 }
 
+function speciesLabel(species) {
+  return SPECIES_LABELS[species] || "動物";
+}
+
 function etaLooksClose(etaLabel) {
   if (!etaLabel) {
     return false;
@@ -1521,6 +1532,10 @@ function renderCards(sessions, speciesBySessionId) {
     node.title = hoverDetail;
 
     node.querySelector(".resident-label").textContent = agentBadgeLabel(session);
+    const speciesChip = node.querySelector(".species-chip");
+    speciesChip.hidden = false;
+    speciesChip.textContent = speciesLabel(species);
+    speciesChip.title = `${speciesLabel(species)} モチーフ`;
     node.querySelector(".provider").textContent = agentName;
     const variantChip = node.querySelector(".variant-chip");
     const variantLabel = agentVariantLabel(session);
