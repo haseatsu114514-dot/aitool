@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI Workboard</title>
+    <title>AI管理ツール</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,15 +18,10 @@
     <div class="room-light room-light-right"></div>
 
     <main class="page">
-      <section class="room-header">
-        <div>
-          <p class="eyebrow">AI PARTY LOBBY</p>
-          <h1>今、部屋にいるAIたち</h1>
-          <p class="header-copy">誰が動いていて、誰が休んでいるかをシンプルに見ます。</p>
-        </div>
+      <section class="room-header room-header-compact">
+        <h1>AI管理ツール</h1>
         <div class="header-meta">
-          <span class="meta-pill">8秒ごと更新</span>
-          <span class="meta-pill">最終更新 <strong id="last-updated">読み込み中</strong></span>
+          <span class="meta-pill">更新 <strong id="last-updated">読み込み中</strong></span>
         </div>
       </section>
 
@@ -96,7 +91,10 @@
 
           <div class="speech-card">
             <div class="card-top">
-              <p class="provider"></p>
+              <div class="provider-stack">
+                <p class="provider"></p>
+                <span class="variant-chip" hidden></span>
+              </div>
               <span class="status-pill"></span>
             </div>
             <div class="identity-row">

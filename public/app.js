@@ -779,6 +779,32 @@ function sourceChipLabel(session) {
   return clampText(cleanedSource, 12);
 }
 
+function agentVariantLabel(session) {
+  if (session.provider === "Claude") {
+    if (session.sourceType === "cli") {
+      return "Code";
+    }
+    if (session.sourceType === "browser") {
+      return "Web";
+    }
+    return "Desktop";
+  }
+
+  return "";
+}
+
+function visualStatusState(session, stale) {
+  if (stale) {
+    return "stale";
+  }
+
+  if (session.statusLabel === "表示中") {
+    return "viewing";
+  }
+
+  return session.statusKey;
+}
+
 function effectiveCompactMode() {
   return compactMode || window.innerWidth <= AUTO_COMPACT_WIDTH;
 }
@@ -1495,7 +1521,15 @@ function renderCards(sessions, speciesBySessionId) {
     node.title = hoverDetail;
 
     node.querySelector(".resident-label").textContent = agentBadgeLabel(session);
-    node.querySelector(".provider").textContent = `${agentName} の作業`;
+    node.querySelector(".provider").textContent = agentName;
+    const variantChip = node.querySelector(".variant-chip");
+    const variantLabel = agentVariantLabel(session);
+    if (variantLabel) {
+      variantChip.hidden = false;
+      variantChip.textContent = variantLabel;
+    } else {
+      variantChip.hidden = true;
+    }
     const projectChip = node.querySelector(".project-chip");
     if (project?.name) {
       projectChip.hidden = false;
@@ -1522,7 +1556,7 @@ function renderCards(sessions, speciesBySessionId) {
 
     const pill = node.querySelector(".status-pill");
     pill.textContent = stale ? "30分放置" : session.statusLabel;
-    pill.dataset.state = stale ? "stale" : session.statusKey;
+    pill.dataset.state = visualStatusState(session, stale);
 
     const workspace = node.querySelector(".workspace");
     workspace.textContent = `場所: ${shortLocation(session)}`;

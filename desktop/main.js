@@ -1,13 +1,14 @@
 import path from "node:path";
 import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, nativeImage, shell } from "electron";
+import { app, BrowserWindow, nativeImage, screen, shell } from "electron";
 import { startServer } from "../src/server.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, "..");
 const ICON_PATH = path.join(ROOT_DIR, "desktop", "icons", "app-icon.png");
 const LOG_PATH = "/tmp/ai-workboard-desktop.log";
+const APP_TITLE = "AI管理ツール";
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const WINDOW_REVEAL_DELAY_MS = 1200;
 
@@ -44,7 +45,7 @@ function inlinePage({ title, body, tone = "info" }) {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI Workboard</title>
+    <title>${APP_TITLE}</title>
     <style>
       :root {
         color-scheme: dark;
@@ -95,7 +96,7 @@ function inlinePage({ title, body, tone = "info" }) {
   </head>
   <body>
     <main>
-      <p class="eyebrow">AI WORKBOARD</p>
+      <p class="eyebrow">${APP_TITLE}</p>
       <h1>${escapeHtml(title)}</h1>
       <p>${escapeHtml(body)}</p>
     </main>
@@ -208,13 +209,21 @@ async function createMainWindow() {
   }
 
   const icon = nativeImage.createFromPath(ICON_PATH);
+  const workArea = screen.getPrimaryDisplay().workArea;
+  const initialWidth = 1360;
+  const initialHeight = 940;
+  const leftInset = 18;
+  const x = workArea.x + leftInset;
+  const y = workArea.y + Math.max(24, Math.round((workArea.height - initialHeight) / 2));
 
   windowRef = new BrowserWindow({
-    width: 1360,
-    height: 940,
+    width: initialWidth,
+    height: initialHeight,
     minWidth: 300,
     minHeight: 360,
-    title: "AI Workboard",
+    x,
+    y,
+    title: APP_TITLE,
     backgroundColor: "#15182d",
     autoHideMenuBar: true,
     show: true,
@@ -282,7 +291,7 @@ async function createMainWindow() {
     focusMainWindow();
   });
 
-  await loadStatusPage("起動しています", "AI Workboard を準備中です。少し待つと一覧が出ます。");
+  await loadStatusPage("起動しています", `${APP_TITLE} を準備中です。少し待つと一覧が出ます。`);
   scheduleReveal();
   void loadMainInterface(windowRef);
 }

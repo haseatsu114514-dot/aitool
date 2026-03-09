@@ -134,12 +134,16 @@ body.is-compact .card-grid {
 }
 
 .room-header {
-  padding: 18px 20px;
+  padding: 12px 14px;
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.room-header-compact h1 {
+  font-size: clamp(1rem, 2vw, 1.25rem);
 }
 
 .eyebrow {
@@ -192,7 +196,7 @@ body.is-compact .card-grid {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 12px;
+  padding: 7px 10px;
   background: rgba(255, 255, 255, 0.08);
   color: #dce7ff;
   border: 1px solid rgba(187, 225, 255, 0.2);
@@ -258,6 +262,11 @@ body.is-compact .card-grid {
   color: var(--ink);
   cursor: pointer;
   box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.22);
+}
+
+#compact-toggle {
+  padding: 7px 10px;
+  font-size: 0.78rem;
 }
 
 .filter-button.is-active {
@@ -1552,6 +1561,13 @@ body.is-compact .speech-card {
   align-items: center;
 }
 
+.provider-stack {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .provider {
   margin: 0;
   color: var(--provider-main);
@@ -1562,6 +1578,26 @@ body.is-compact .speech-card {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.variant-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.64rem;
+  line-height: 1;
+  font-weight: 700;
+  font-family: "DotGothic16", sans-serif;
+  background: rgba(39, 42, 49, 0.08);
+  border: 1px solid rgba(39, 42, 49, 0.12);
+  color: #4f5b71;
+}
+
+.provider-claude .variant-chip {
+  background: rgba(209, 106, 59, 0.14);
+  border-color: rgba(209, 106, 59, 0.22);
+  color: #9f4f2f;
 }
 
 .task-title {
@@ -1625,6 +1661,11 @@ body.is-compact .summary {
 .status-pill[data-state="running"] {
   background: var(--green-soft);
   color: var(--green);
+}
+
+.status-pill[data-state="viewing"] {
+  background: rgba(85, 159, 255, 0.16);
+  color: #2e6ec8;
 }
 
 .status-pill[data-state="waiting"],
@@ -2218,6 +2259,12 @@ body.is-auto-compact .speech-card::before {
 body.is-compact .provider,
 body.is-auto-compact .provider {
   font-size: 0.72rem;
+}
+
+body.is-compact .variant-chip,
+body.is-auto-compact .variant-chip {
+  padding: 3px 6px;
+  font-size: 0.56rem;
 }
 
 body.is-compact .status-pill,
