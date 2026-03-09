@@ -6,7 +6,7 @@ import { startServer } from "../src/server.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(__dirname, "..");
-const ICON_PATH = path.join(ROOT_DIR, "desktop", "icons", "app-icon.svg");
+const ICON_PATH = path.join(ROOT_DIR, "desktop", "icons", "app-icon.png");
 const LOG_PATH = "/tmp/ai-workboard-desktop.log";
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const WINDOW_REVEAL_DELAY_MS = 1200;

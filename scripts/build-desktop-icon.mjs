@@ -44,6 +44,25 @@ function renderBasePng(tempDir) {
   }
 
   run("sips", ["-s", "format", "png", quickLookOutput, "--out", OUTPUT_PNG]);
+  applyRoundedMask();
+}
+
+function applyRoundedMask() {
+  execFileSync("python3", [
+    "-c",
+    `
+from PIL import Image, ImageDraw
+path = ${JSON.stringify(OUTPUT_PNG)}
+img = Image.open(path).convert("RGBA")
+mask = Image.new("L", img.size, 0)
+draw = ImageDraw.Draw(mask)
+draw.rounded_rectangle((0, 0, img.size[0] - 1, img.size[1] - 1), radius=240, fill=255)
+img.putalpha(mask)
+img.save(path)
+`.trim(),
+  ], {
+    stdio: "pipe",
+  });
 }
 
 function buildIconset(tempDir) {

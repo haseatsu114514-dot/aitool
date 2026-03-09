@@ -146,10 +146,74 @@ function isWeakProjectLabel(value) {
   ].includes(text);
 }
 
-function fallbackJapaneseTask(rawTitle, rawSummary, project) {
+function isWeakTaskLabel(value) {
+  const text = normalizeText(value).toLowerCase();
+  return !text || [
+    "作業内容",
+    "作業内容 の対応",
+    "作業内容 の改善",
+    "作業内容 の調整",
+    "作業内容 の確認",
+    "作業内容 の整理",
+    "作業内容 の作業",
+    "作業内容 の開発",
+    "作業内容 の追加",
+    "作業内容 の修正",
+    "作業内容 の作成",
+    "内容の改善",
+    "内容の確認",
+    "内容の整理",
+    "内容の調整",
+    "内容確認",
+    "作業",
+    "対応",
+    "改善",
+    "調整",
+    "確認",
+    "整理",
+  ].includes(text);
+}
+
+function extractSpecificTaskLabel(session, rawTitle, rawSummary) {
+  const candidates = [
+    sanitizeTaskSeed(rawTitle),
+    sanitizeTaskSeed(rawSummary),
+    session.workspace ? shortPathLabel(session.workspace) : "",
+  ];
+
+  for (const candidate of candidates) {
+    const cleaned = normalizeText(candidate)
+      .replace(/\b(claude code|claude|codex|chatgpt|gemini|genspark|antigravity|notebooklm|perplexity|copilot|grok|deepseek|browser|desktop|app|web|agent|ai)\b/gi, "")
+      .replace(/^(new project|untitled|conversation|chat|task|session|workspace)$/i, "")
+      .replace(/[|｜].*$/, "")
+      .trim();
+
+    if (!cleaned || isWeakTaskLabel(cleaned) || isGenericProjectName(cleaned)) {
+      continue;
+    }
+
+    if (/\.(tsx?|jsx?|css|html|md|json)$/i.test(cleaned)) {
+      return clampText(`${cleaned} の編集`, 22);
+    }
+
+    if (!looksMostlyLatin(cleaned)) {
+      return clampText(cleaned, 22);
+    }
+  }
+
+  const location = shortLocation(session);
+  if (location && location !== "場所不明" && !isWeakProjectLabel(location) && !isGenericProjectName(location)) {
+    return clampText(`${location} の作業`, 22);
+  }
+
+  return null;
+}
+
+function fallbackJapaneseTask(session, rawTitle, rawSummary, project) {
   const combined = `${rawTitle} ${rawSummary}`;
   const genericProject = isGenericProjectName(project);
   const scopedProject = genericProject ? "作業内容" : project;
+  const specificFallback = extractSpecificTaskLabel(session, rawTitle, rawSummary);
 
   if (/slide|slides|presentation|deck/i.test(combined)) {
     return /layout|design|style|spacing/i.test(combined) ? "スライドの見た目調整" : "スライドづくり";
@@ -184,18 +248,22 @@ function fallbackJapaneseTask(rawTitle, rawSummary, project) {
   }
 
   if (/summary|summarize|document|readme|note|docs?/i.test(combined)) {
-    return `${scopedProject} の整理`;
+    return genericProject ? specificFallback || "内容の整理" : `${scopedProject} の整理`;
   }
 
   if (/test|build|deploy|release|verify|check/i.test(combined)) {
-    return `${scopedProject} の確認`;
+    return genericProject ? specificFallback || "内容の確認" : `${scopedProject} の確認`;
   }
 
   if (/\.tsx?\b|\.jsx?\b|\.css\b|\.html\b|\.md\b|\.json\b|api|server|component|page|file/i.test(combined)) {
-    return `${scopedProject} の調整`;
+    return genericProject ? specificFallback || "ファイルや画面の調整" : `${scopedProject} の調整`;
   }
 
-  return `${scopedProject} の対応`;
+  if (specificFallback) {
+    return specificFallback;
+  }
+
+  return genericProject ? `${session.provider} の内容確認` : `${scopedProject} の対応`;
 }
 
 function isGenericProjectName(project) {
@@ -207,6 +275,7 @@ function isGenericProjectName(project) {
 function summarizeBrowserTask(session, rawTitle, rawSummary, project) {
   const scopedProject = isGenericProjectName(project) ? "作業内容" : project;
   const combined = normalizeText(`${rawTitle} ${rawSummary}`);
+  const specificFallback = extractSpecificTaskLabel(session, rawTitle, rawSummary);
   const seed = sanitizeTaskSeed(
     rawTitle
       .replace(/\|\s*(Claude Code|Claude|ChatGPT|Gemini|Genspark|Perplexity|Copilot|Grok|DeepSeek)\s*$/i, "")
@@ -215,7 +284,7 @@ function summarizeBrowserTask(session, rawTitle, rawSummary, project) {
   );
 
   if (looksGenericTitle(session, prettyTaskTitle(session))) {
-    return `${session.provider} の内容確認`;
+    return specificFallback || `${session.provider} の内容確認`;
   }
 
   if (/slide|slides|presentation|deck/i.test(combined)) {
@@ -231,7 +300,7 @@ function summarizeBrowserTask(session, rawTitle, rawSummary, project) {
   }
 
   if (/research|investigate|search/i.test(combined)) {
-    return `${scopedProject} の調査`;
+    return specificFallback || `${scopedProject} の調査`;
   }
 
   if (/image|art|sprite|illustration/i.test(combined)) {
@@ -247,10 +316,10 @@ function summarizeBrowserTask(session, rawTitle, rawSummary, project) {
   }
 
   if (seed) {
-    return fallbackJapaneseTask(rawTitle, rawSummary, project);
+    return fallbackJapaneseTask(session, rawTitle, rawSummary, project);
   }
 
-  return `${session.provider} の内容確認`;
+  return specificFallback || `${session.provider} の内容確認`;
 }
 
 function shortPathLabel(value) {
@@ -460,6 +529,7 @@ function summarizeRequestedTask(session) {
   const rawSummary = normalizeText(session.summary);
   const project = projectContextName(session);
   const scopedProject = isGenericProjectName(project) ? "作業内容" : project;
+  const specificFallback = extractSpecificTaskLabel(session, rawTitle, rawSummary);
   const combined = normalizeText(
     [rawTitle, rawSummary, session.workspace ? shortPathLabel(session.workspace) : ""].filter(Boolean).join(" "),
   );
@@ -505,15 +575,15 @@ function summarizeRequestedTask(session) {
   }
 
   if (/作成|作って|追加|実装|対応|改善|修正|build|test|deploy|verify|check/i.test(combined)) {
-    return isGenericProjectName(project) ? "作業内容の改善" : `${project} の改善`;
+    return isGenericProjectName(project) ? specificFallback || "内容の改善" : `${project} の改善`;
   }
 
   if (/編集中:/i.test(String(session.taskTitle || ""))) {
-    return `${scopedProject} の編集中ファイル対応`;
+    return specificFallback || `${scopedProject} の編集中ファイル対応`;
   }
 
   if (looksGenericTitle(session, rawTitle)) {
-    return `${scopedProject} の作業`;
+    return specificFallback || `${scopedProject} の作業`;
   }
 
   const seed = sanitizeTaskSeed(
@@ -523,18 +593,18 @@ function summarizeRequestedTask(session) {
   );
 
   if (!seed) {
-    return `${scopedProject} の作業`;
+    return specificFallback || `${scopedProject} の作業`;
   }
 
   if (looksMostlyLatin(seed)) {
-    return fallbackJapaneseTask(rawTitle, rawSummary, project);
+    return fallbackJapaneseTask(session, rawTitle, rawSummary, project);
   }
 
   if (/\.tsx?\b|\.jsx?\b|\.css\b|\.html\b|\.md\b|\.json\b/i.test(seed)) {
-    return `${scopedProject} のファイル対応`;
+    return specificFallback || `${scopedProject} のファイル対応`;
   }
 
-  return clampText(seed, 20) || `${scopedProject} の作業`;
+  return clampText(seed, 20) || specificFallback || `${scopedProject} の作業`;
 }
 
 function hashText(value) {

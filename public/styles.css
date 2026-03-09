@@ -2233,3 +2233,83 @@ body.is-auto-compact .task-title {
   min-height: 0;
   -webkit-line-clamp: 2;
 }
+
+body.is-compact .resident-avatar,
+body.is-auto-compact .resident-avatar {
+  width: 36px;
+  min-width: 36px;
+}
+
+body.is-compact .resident-head,
+body.is-auto-compact .resident-head {
+  width: 32px;
+  height: 35px;
+  border-width: 2px;
+  box-shadow:
+    inset 0 -2px 0 rgba(0, 0, 0, 0.12),
+    inset 0 2px 0 rgba(255, 255, 255, 0.18),
+    0 0 0 3px var(--mood-glow);
+}
+
+body.is-compact .resident-head::before,
+body.is-compact .resident-head::after,
+body.is-auto-compact .resident-head::before,
+body.is-auto-compact .resident-head::after,
+body.is-compact .resident-head .pet-antenna,
+body.is-auto-compact .resident-head .pet-antenna {
+  display: none;
+}
+
+body.is-compact .resident-head .pet-face::before,
+body.is-auto-compact .resident-head .pet-face::before {
+  top: 14px;
+  left: 9px;
+  width: 4px;
+  height: 4px;
+  box-shadow:
+    10px 0 0 #2b2f36,
+    -3px 8px 0 -2px rgba(255, 142, 170, 0.85),
+    13px 8px 0 -2px rgba(255, 142, 170, 0.85);
+}
+
+body.is-compact .resident-head .pet-face::after,
+body.is-auto-compact .resident-head .pet-face::after {
+  left: 13px;
+  top: 21px;
+  width: 6px;
+  height: 4px;
+  border-bottom-width: 2px;
+}
+
+body.is-compact .session-card[data-mood="focus"] .resident-head .pet-face::after,
+body.is-auto-compact .session-card[data-mood="focus"] .resident-head .pet-face::after {
+  top: 22px;
+  width: 7px;
+}
+
+body.is-compact .session-card[data-mood="happy"] .resident-head .pet-face::after,
+body.is-auto-compact .session-card[data-mood="happy"] .resident-head .pet-face::after {
+  top: 21px;
+  width: 7px;
+  height: 5px;
+}
+
+body.is-compact .session-card[data-mood="rest"] .resident-head .pet-face::before,
+body.is-auto-compact .session-card[data-mood="rest"] .resident-head .pet-face::before {
+  top: 15px;
+  left: 8px;
+  width: 6px;
+  height: 2px;
+  box-shadow:
+    10px 0 0 #2b2f36,
+    -3px 8px 0 -2px rgba(149, 197, 255, 0.85),
+    12px 8px 0 -2px rgba(149, 197, 255, 0.85);
+}
+
+body.is-compact .session-card[data-mood="rest"] .resident-head .pet-face::after,
+body.is-auto-compact .session-card[data-mood="rest"] .resident-head .pet-face::after {
+  top: 23px;
+  left: 14px;
+  width: 6px;
+  border-bottom-width: 2px;
+}

@@ -28,44 +28,37 @@
     </filter>
   </defs>
 
-  <rect width="1024" height="1024" rx="246" fill="url(#bg)"/>
-  <rect width="1024" height="1024" rx="246" fill="url(#aura)"/>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#aura)"/>
 
   <g opacity=".09" stroke="#dce7ff" stroke-width="7">
-    <path d="M198 222h628"/>
-    <path d="M198 350h628"/>
-    <path d="M198 478h628"/>
-    <path d="M198 606h628"/>
-    <path d="M198 734h628"/>
-    <path d="M230 174v680"/>
-    <path d="M358 174v680"/>
-    <path d="M486 174v680"/>
-    <path d="M614 174v680"/>
-    <path d="M742 174v680"/>
+    <path d="M178 198h668"/>
+    <path d="M178 334h668"/>
+    <path d="M178 470h668"/>
+    <path d="M178 606h668"/>
+    <path d="M178 742h668"/>
+    <path d="M214 150v724"/>
+    <path d="M350 150v724"/>
+    <path d="M486 150v724"/>
+    <path d="M622 150v724"/>
+    <path d="M758 150v724"/>
   </g>
 
   <g filter="url(#shadow)">
-    <ellipse cx="512" cy="548" rx="290" ry="342" fill="#10204a" opacity=".62"/>
-    <ellipse cx="512" cy="538" rx="256" ry="312" fill="url(#shell)"/>
-    <path d="M512 226c-130 0-236 140-236 312 0 33 4 65 12 94 8-118 64-221 146-273 41-26 66-61 78-133z" fill="url(#shellSide)" opacity=".92"/>
-    <ellipse cx="512" cy="566" rx="148" ry="158" fill="url(#cream)"/>
-    <circle cx="512" cy="260" r="40" fill="#7bb7ff"/>
-    <rect x="502" y="290" width="20" height="64" rx="10" fill="#203151"/>
-    <circle cx="434" cy="520" r="18" fill="#29334d"/>
-    <circle cx="590" cy="520" r="18" fill="#29334d"/>
-    <path d="M434 652c44 38 112 38 156 0" fill="none" stroke="#29334d" stroke-linecap="round" stroke-width="16"/>
-    <circle cx="390" cy="596" r="14" fill="#ff9bb7"/>
-    <circle cx="634" cy="596" r="14" fill="#ff9bb7"/>
-    <ellipse cx="424" cy="396" rx="36" ry="56" fill="#8bc0ff" transform="rotate(-28 424 396)"/>
-    <ellipse cx="600" cy="396" rx="36" ry="56" fill="#8bc0ff" transform="rotate(28 600 396)"/>
-    <ellipse cx="432" cy="402" rx="18" ry="26" fill="#aacfff" transform="rotate(-28 432 402)"/>
-    <ellipse cx="592" cy="402" rx="18" ry="26" fill="#aacfff" transform="rotate(28 592 402)"/>
-  </g>
-
-  <g>
-    <circle cx="214" cy="760" r="28" fill="#7fe2ba"/>
-    <circle cx="282" cy="816" r="22" fill="#f4cb4f"/>
-    <circle cx="810" cy="766" r="30" fill="#9563ff"/>
-    <circle cx="742" cy="834" r="22" fill="#f2a55d"/>
+    <ellipse cx="512" cy="552" rx="364" ry="404" fill="#10204a" opacity=".44"/>
+    <ellipse cx="512" cy="540" rx="324" ry="378" fill="url(#shell)"/>
+    <path d="M512 162c-166 0-300 170-300 378 0 38 5 75 16 112 10-145 80-272 186-336 51-30 82-73 98-154z" fill="url(#shellSide)" opacity=".94"/>
+    <ellipse cx="512" cy="584" rx="190" ry="194" fill="url(#cream)"/>
+    <circle cx="512" cy="206" r="50" fill="#7bb7ff"/>
+    <rect x="499" y="246" width="26" height="86" rx="13" fill="#203151"/>
+    <circle cx="414" cy="528" r="22" fill="#29334d"/>
+    <circle cx="610" cy="528" r="22" fill="#29334d"/>
+    <path d="M412 676c56 46 144 46 200 0" fill="none" stroke="#29334d" stroke-linecap="round" stroke-width="22"/>
+    <circle cx="362" cy="610" r="18" fill="#ff9bb7"/>
+    <circle cx="662" cy="610" r="18" fill="#ff9bb7"/>
+    <ellipse cx="400" cy="370" rx="48" ry="74" fill="#8bc0ff" transform="rotate(-30 400 370)"/>
+    <ellipse cx="624" cy="370" rx="48" ry="74" fill="#8bc0ff" transform="rotate(30 624 370)"/>
+    <ellipse cx="410" cy="380" rx="22" ry="34" fill="#aacfff" transform="rotate(-30 410 380)"/>
+    <ellipse cx="614" cy="380" rx="22" ry="34" fill="#aacfff" transform="rotate(30 614 380)"/>
   </g>
 </svg>
