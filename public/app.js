@@ -6,10 +6,9 @@ const statTemplate = document.querySelector("#stat-template");
 const cardTemplate = document.querySelector("#card-template");
 const filterButtons = [...document.querySelectorAll(".filter-button[data-filter]")];
 const viewButtons = [...document.querySelectorAll(".view-button[data-view]")];
+const refreshButton = document.querySelector("#refresh-button");
 const compactToggleButton = document.querySelector("#compact-toggle");
 const notificationToggleButton = document.querySelector("#notification-toggle");
-const restoreHiddenButton = document.querySelector("#restore-hidden");
-const hiddenTray = document.querySelector("#hidden-tray");
 const staleTray = document.querySelector("#stale-tray");
 const noticeFeedRoot = document.querySelector("#notice-feed");
 const runtimeBadge = document.querySelector("#runtime-badge");
@@ -24,10 +23,14 @@ const COMPACT_STORAGE_KEY = "ai-workboard-compact";
 const NOTIFICATION_STORAGE_KEY = "ai-workboard-notifications";
 const STALE_MS = 30 * 60 * 1000;
 const SNAPSHOT_GRACE_MS = 24 * 1000;
+const RUNNING_SNAPSHOT_GRACE_MS = 90 * 1000;
 const COMPACT_VISIBILITY_GRACE_MS = 24 * 1000;
+const ACTIVE_HINT_GRACE_MS = 12 * 60 * 1000;
 const MAX_NOTICE_ITEMS = 5;
 const SPECIES_TYPES = ["hamster", "cat", "rabbit", "bear"];
 const AUTO_COMPACT_WIDTH = 520;
+const ACTIVE_STATUS_PATTERN =
+  /コンテキストを自動的に圧縮しています|コンテキスト.*圧縮中|圧縮しています|圧縮中|思考中|試行中|考え中|推論中|処理中|分析中|実行中|thinking|reasoning|processing|compressing|compacting|summarizing context|summarising context|trying/i;
 
 const PROVIDER_META = {
   Codex: { label: "CX", className: "provider-codex" },
@@ -47,7 +50,7 @@ const PROVIDER_META = {
 let activeFilter = "all";
 let activeView = loadViewMode();
 let compactMode = loadCompactMode();
-let hiddenSessionIds = loadHiddenSessionIds();
+let hiddenSessionIds = new Set();
 let latestSnapshot = null;
 let notificationsEnabled = loadNotificationPreference();
 let notificationBaselineReady = false;
@@ -55,6 +58,17 @@ let noticeFeed = [];
 const speciesAssignments = new Map();
 const notificationSessions = new Map();
 const sessionContinuityCache = new Map();
+const closingSessionIds = new Set();
+let refreshInFlight = null;
+
+function setRefreshButtonState(isLoading) {
+  if (!refreshButton) {
+    return;
+  }
+
+  refreshButton.disabled = isLoading;
+  refreshButton.textContent = isLoading ? "更新中" : "更新";
+}
 
 function clampText(value, maxLength = 68) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -395,9 +409,50 @@ function sessionActivityMs(session) {
   return Number.isNaN(value) ? null : value;
 }
 
+function hasActiveStatusCue(session) {
+  const text = normalizeText(
+    [session.statusLabel, session.taskTitle, session.summary, session.source]
+      .filter(Boolean)
+      .join(" "),
+  );
+  return ACTIVE_STATUS_PATTERN.test(text);
+}
+
+function sessionEffectiveStatusKey(session) {
+  if (session.statusKey === "running" || session.statusKey === "viewing") {
+    return session.statusKey;
+  }
+
+  if (!hasActiveStatusCue(session)) {
+    return session.statusKey;
+  }
+
+  const now = Date.now();
+  const activityMs = sessionActivityMs(session);
+  const warmActivity = typeof activityMs === "number" && now - activityMs < ACTIVE_HINT_GRACE_MS;
+  const warmRunning =
+    typeof session.__lastRunningAt === "number" && now - session.__lastRunningAt < ACTIVE_HINT_GRACE_MS;
+
+  return session.frontmost || warmActivity || warmRunning || session.__retained ? "running" : session.statusKey;
+}
+
+function sessionEffectiveStatusLabel(session) {
+  const statusKey = sessionEffectiveStatusKey(session);
+  if (statusKey === "running") {
+    return "作業中";
+  }
+  if (statusKey === "viewing") {
+    return "表示中";
+  }
+  if (statusKey === "idle") {
+    return "開いたまま";
+  }
+  return "待機中";
+}
+
 function staleDurationMs(session) {
   const activityMs = sessionActivityMs(session);
-  if (!activityMs || session.statusKey === "running") {
+  if (!activityMs || sessionEffectiveStatusKey(session) === "running") {
     return null;
   }
 
@@ -822,14 +877,19 @@ function stabilizeSnapshot(snapshot) {
   const nextCache = new Map();
 
   for (const session of incomingSessions) {
+    closingSessionIds.delete(session.id);
+  }
+
+  for (const session of incomingSessions) {
     const key = sessionCacheKey(session);
     const previous = sessionContinuityCache.get(key);
+    const effectiveStatusKey = sessionEffectiveStatusKey({ ...(previous?.session || {}), ...session });
     const lastRunningAt =
-      session.statusKey === "running"
+      effectiveStatusKey === "running"
         ? now
         : previous?.lastRunningAt || previous?.session?.__lastRunningAt || null;
     const lastVisibleAt =
-      session.statusKey === "running" || session.statusKey === "viewing"
+      effectiveStatusKey === "running" || effectiveStatusKey === "viewing"
         ? now
         : previous?.lastVisibleAt || previous?.session?.__lastVisibleAt || null;
 
@@ -862,7 +922,10 @@ function stabilizeSnapshot(snapshot) {
     }
 
     const missingSince = previous.missingSince || now;
-    if (now - missingSince > SNAPSHOT_GRACE_MS) {
+    const graceMs = sessionEffectiveStatusKey(previous.session) === "running"
+      ? RUNNING_SNAPSHOT_GRACE_MS
+      : SNAPSHOT_GRACE_MS;
+    if (now - missingSince > graceMs) {
       continue;
     }
 
@@ -926,15 +989,17 @@ function visualStatusState(session, stale) {
     return "stale";
   }
 
-  if (session.statusKey === "viewing" || session.statusLabel === "表示中") {
+  const statusKey = sessionEffectiveStatusKey(session);
+  if (statusKey === "viewing") {
     return "viewing";
   }
 
-  return session.statusKey;
+  return statusKey;
 }
 
 function shouldKeepVisibleInCompact(session) {
-  if (session.statusKey === "running" || session.statusKey === "viewing") {
+  const statusKey = sessionEffectiveStatusKey(session);
+  if (statusKey === "running" || statusKey === "viewing") {
     return true;
   }
 
@@ -950,6 +1015,27 @@ function effectiveCompactMode() {
   return compactMode || window.innerWidth <= AUTO_COMPACT_WIDTH;
 }
 
+function cardDensityLevel(sessions) {
+  const count = sessions.length;
+  if (effectiveCompactMode()) {
+    if (count >= 8) {
+      return "tight";
+    }
+    if (count >= 5) {
+      return "dense";
+    }
+    return "normal";
+  }
+
+  if (count >= 10) {
+    return "tight";
+  }
+  if (count >= 7) {
+    return "dense";
+  }
+  return "normal";
+}
+
 function resizeWindowForCompact(enabled) {
   if (!runningInsideDesktopApp() || typeof window.resizeTo !== "function") {
     return;
@@ -963,23 +1049,44 @@ function resizeWindowForCompact(enabled) {
   window.resizeTo(1120, 900);
 }
 
+function removeSessionFromView(session) {
+  if (session.__cacheKey) {
+    sessionContinuityCache.delete(session.__cacheKey);
+  }
+
+  closingSessionIds.add(session.id);
+
+  if (latestSnapshot?.sessions?.length) {
+    latestSnapshot = {
+      ...latestSnapshot,
+      sessions: latestSnapshot.sessions.filter((item) => item.id !== session.id),
+    };
+    rerender();
+  }
+
+  window.setTimeout(() => {
+    closingSessionIds.delete(session.id);
+  }, 15000);
+}
+
 function buildTaskSummaryDetail(session) {
   const task = summarizeRequestedTask(session);
   const location = shortLocation(session);
+  const statusKey = sessionEffectiveStatusKey(session);
 
   if (isStaleSession(session)) {
     return `${task} が30分以上止まっています。`;
   }
 
-  if (session.statusKey === "waiting") {
+  if (statusKey === "waiting") {
     return `${task} の返事待ちです。`;
   }
 
-  if (session.statusKey === "viewing") {
+  if (statusKey === "viewing") {
     return `${task} の画面を表示しています。`;
   }
 
-  if (session.statusKey === "idle") {
+  if (statusKey === "idle") {
     return session.sourceType === "browser"
       ? `${task} のページを開いたままです。`
       : `${task} を開いたまま休んでいます。`;
@@ -1004,7 +1111,7 @@ function cardHoverDetail(session) {
   const lines = [
     agentDisplayName(session),
     `内容: ${summarizeRequestedTask(session)}`,
-    `状態: ${isStaleSession(session) ? staleLabel(session) || "長く停止中" : session.statusLabel}`,
+    `状態: ${isStaleSession(session) ? staleLabel(session) || "長く停止中" : sessionEffectiveStatusLabel(session)}`,
     buildTaskSummaryDetail(session),
   ];
 
@@ -1036,11 +1143,12 @@ function etaLooksClose(etaLabel) {
 }
 
 function resolveMood(session) {
+  const statusKey = sessionEffectiveStatusKey(session);
   if (isStaleSession(session)) {
     return "rest";
   }
 
-  if (session.statusKey === "waiting" || session.statusKey === "idle" || session.statusKey === "viewing") {
+  if (statusKey === "waiting" || statusKey === "idle" || statusKey === "viewing") {
     return "rest";
   }
 
@@ -1052,6 +1160,7 @@ function resolveMood(session) {
 }
 
 function resolveActivity(session) {
+  const statusKey = sessionEffectiveStatusKey(session);
   if (isStaleSession(session)) {
     return {
       key: "sleep",
@@ -1061,7 +1170,7 @@ function resolveActivity(session) {
   }
 
   if (session.sourceType === "browser") {
-    if (session.statusKey === "viewing") {
+    if (statusKey === "viewing") {
       return {
         key: "window",
         label: "表示中",
@@ -1070,13 +1179,13 @@ function resolveActivity(session) {
     }
 
     return {
-      key: session.statusKey === "running" ? "window" : "sleep",
-      label: session.statusKey === "running" ? "ブラウザ確認" : "開いたまま",
-      sceneNow: session.statusKey === "running" ? "いま: ブラウザを確認中" : "いま: ひと休み中",
+      key: statusKey === "running" ? "window" : "sleep",
+      label: statusKey === "running" ? "ブラウザ確認" : "開いたまま",
+      sceneNow: statusKey === "running" ? "いま: ブラウザを確認中" : "いま: ひと休み中",
     };
   }
 
-  if (session.statusKey === "waiting") {
+  if (statusKey === "waiting") {
     return {
       key: "sleep",
       label: "返事待ち",
@@ -1084,7 +1193,7 @@ function resolveActivity(session) {
     };
   }
 
-  if (session.statusKey === "idle") {
+  if (statusKey === "idle") {
     return {
       key: "sleep",
       label: "休憩中",
@@ -1092,7 +1201,7 @@ function resolveActivity(session) {
     };
   }
 
-  if (session.statusKey === "running") {
+  if (statusKey === "running") {
     return {
       key: "desk",
       label: "PC作業中",
@@ -1138,11 +1247,13 @@ function syncRuntimeBadge() {
 }
 
 function displayUpdatedMs(session) {
-  if (session.statusKey === "running" && session.sourceType === "browser") {
+  const statusKey = sessionEffectiveStatusKey(session);
+
+  if (statusKey === "running" && session.sourceType === "browser") {
     return Date.now();
   }
 
-  if (shouldKeepVisibleInCompact(session) && session.statusKey !== "running") {
+  if (shouldKeepVisibleInCompact(session) && statusKey !== "running") {
     return session.__lastVisibleAt || session.__lastRunningAt || sessionActivityMs(session) || 0;
   }
 
@@ -1167,7 +1278,8 @@ function sortSessionsByFreshness(sessions) {
       return updatedDelta;
     }
 
-    const stateDelta = (stateOrder[a.statusKey] ?? 9) - (stateOrder[b.statusKey] ?? 9);
+    const stateDelta =
+      (stateOrder[sessionEffectiveStatusKey(a)] ?? 9) - (stateOrder[sessionEffectiveStatusKey(b)] ?? 9);
     if (stateDelta !== 0) {
       return stateDelta;
     }
@@ -1177,11 +1289,8 @@ function sortSessionsByFreshness(sessions) {
 }
 
 function loadHiddenSessionIds() {
-  try {
-    return new Set(JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "[]"));
-  } catch {
-    return new Set();
-  }
+  window.localStorage.removeItem(STORAGE_KEY);
+  return new Set();
 }
 
 function loadViewMode() {
@@ -1203,7 +1312,7 @@ function loadCompactMode() {
 }
 
 function saveHiddenSessionIds() {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...hiddenSessionIds]));
+  window.localStorage.removeItem(STORAGE_KEY);
 }
 
 function saveViewMode() {
@@ -1243,7 +1352,7 @@ function syncCompactMode() {
   }
 
   compactToggleButton.classList.toggle("is-active", compactActive);
-  compactToggleButton.textContent = compactActive ? "通常に戻す" : "縦長コンパクト";
+  compactToggleButton.textContent = compactActive ? "通常モード" : "縦長";
   compactToggleButton.title = compactActive
     ? "通常の一覧と部屋表示に戻します。"
     : "作業中だけを縦長で小さく見ます。";
@@ -1354,7 +1463,7 @@ function rememberNotificationState(snapshot) {
     }
 
     notificationSessions.set(session.id, {
-      statusKey: session.statusKey,
+      statusKey: sessionEffectiveStatusKey(session),
       stale: isStaleSession(session),
       label: resolveProject(session)?.name || summarizeRequestedTask(session),
       provider: agentDisplayName(session),
@@ -1403,7 +1512,7 @@ function evaluateNotifications(snapshot) {
     }
 
     const current = {
-      statusKey: session.statusKey,
+      statusKey: sessionEffectiveStatusKey(session),
       stale: isStaleSession(session),
       label: resolveProject(session)?.name || summarizeRequestedTask(session),
       provider: agentDisplayName(session),
@@ -1411,7 +1520,7 @@ function evaluateNotifications(snapshot) {
     };
     const previous = notificationSessions.get(session.id);
 
-    if (previous?.statusKey === "running" && session.statusKey !== "running") {
+    if (previous?.statusKey === "running" && current.statusKey !== "running") {
       showNotification(
         `${current.label} が止まりました`,
         `${current.provider} が返事待ちや確認待ちに変わりました。`,
@@ -1482,7 +1591,7 @@ function formatRelative(isoString) {
 
 function visibleSessionsFromSnapshot(snapshot) {
   const sessions = snapshot?.sessions || [];
-  return sessions.filter((session) => !hiddenSessionIds.has(session.id));
+  return sessions.filter((session) => !hiddenSessionIds.has(session.id) && !closingSessionIds.has(session.id));
 }
 
 function filteredSessions(sessions) {
@@ -1493,14 +1602,15 @@ function filteredSessions(sessions) {
   }
 
   return sessions.filter((session) => {
+    const statusKey = sessionEffectiveStatusKey(session);
     if (activeFilter === "all") {
       return true;
     }
     if (activeFilter === "running") {
-      return session.statusKey === "running";
+      return statusKey === "running";
     }
     if (activeFilter === "waiting") {
-      return session.statusKey === "waiting" || session.statusKey === "idle" || session.statusKey === "viewing";
+      return statusKey === "waiting" || statusKey === "idle" || statusKey === "viewing";
     }
     if (activeFilter === "browser") {
       return session.sourceType === "browser";
@@ -1523,12 +1633,12 @@ function renderStats(sessions) {
     },
     {
       label: "作業中",
-      value: `${sessions.filter((session) => session.statusKey === "running").length}件`,
+      value: `${sessions.filter((session) => sessionEffectiveStatusKey(session) === "running").length}件`,
       help: "今動いていそう",
     },
     {
       label: "ひと休み",
-      value: `${sessions.filter((session) => session.statusKey !== "running").length}件`,
+      value: `${sessions.filter((session) => sessionEffectiveStatusKey(session) !== "running").length}件`,
       help: "待機や開いたまま",
     },
     {
@@ -1571,41 +1681,6 @@ function renderWarnings(warnings) {
   }
 
   warningsRoot.append(title, list);
-}
-
-function renderHiddenTray(snapshot) {
-  hiddenTray.innerHTML = "";
-
-  const hiddenSessions = (snapshot?.sessions || []).filter((session) => hiddenSessionIds.has(session.id));
-
-  if (!hiddenSessions.length) {
-    hiddenTray.hidden = true;
-    return;
-  }
-
-  hiddenTray.hidden = false;
-
-  const title = document.createElement("p");
-  title.className = "hidden-tray-title";
-  title.textContent = "隠しているAI";
-
-  const list = document.createElement("div");
-  list.className = "hidden-tray-list";
-
-  for (const session of hiddenSessions) {
-    const item = document.createElement("button");
-    item.type = "button";
-    item.className = "hidden-chip";
-    item.textContent = `${agentDisplayName(session)} を戻す`;
-    item.addEventListener("click", () => {
-      hiddenSessionIds.delete(session.id);
-      saveHiddenSessionIds();
-      rerender();
-    });
-    list.append(item);
-  }
-
-  hiddenTray.append(title, list);
 }
 
 function renderStaleTray(sessions) {
@@ -1651,8 +1726,12 @@ function renderStaleTray(sessions) {
 
 function renderCards(sessions, speciesBySessionId, agentOrdinals) {
   cardsRoot.innerHTML = "";
+  const compact = effectiveCompactMode();
+  cardsRoot.dataset.density = cardDensityLevel(sessions);
+  cardsRoot.dataset.count = String(sessions.length);
 
   if (!sessions.length) {
+    cardsRoot.dataset.density = "normal";
     const empty = document.createElement("article");
     empty.className = "empty-card";
     empty.textContent = "この部屋には、今その条件のAIはいません。";
@@ -1675,7 +1754,9 @@ function renderCards(sessions, speciesBySessionId, agentOrdinals) {
 
     const node = cardTemplate.content.firstElementChild.cloneNode(true);
     const stale = isStaleSession(session);
-    node.dataset.state = session.statusKey;
+    const effectiveStatusKey = sessionEffectiveStatusKey(session);
+    const effectiveStatusLabel = sessionEffectiveStatusLabel(session);
+    node.dataset.state = effectiveStatusKey;
     node.dataset.mood = resolveMood(session);
     node.dataset.activity = activity.key;
     node.dataset.stale = stale ? "true" : "false";
@@ -1719,7 +1800,7 @@ function renderCards(sessions, speciesBySessionId, agentOrdinals) {
     node.querySelector(".speech-card").title = hoverDetail;
 
     const pill = node.querySelector(".status-pill");
-    pill.textContent = stale ? "30分放置" : session.statusLabel;
+    pill.textContent = stale ? "30分放置" : effectiveStatusLabel;
     pill.dataset.state = visualStatusState(session, stale);
 
     const workspace = node.querySelector(".workspace");
@@ -1734,7 +1815,7 @@ function renderCards(sessions, speciesBySessionId, agentOrdinals) {
 
     const link = node.querySelector(".card-link");
     if (canReopenSession(session)) {
-      link.textContent = stale ? "開いて確認" : "開いて表示";
+      link.textContent = "開く";
       link.hidden = false;
       link.addEventListener("click", async () => {
         link.disabled = true;
@@ -1783,40 +1864,47 @@ function renderCards(sessions, speciesBySessionId, agentOrdinals) {
     }
 
     const closeButton = node.querySelector(".close-button");
-    if (canCloseSession(session) && session.statusKey !== "running") {
-      closeButton.hidden = false;
-      closeButton.textContent = closeButtonLabel(session);
+    closeButton.hidden = false;
+    closeButton.textContent = "×";
+
+    if (!canCloseSession(session)) {
+      closeButton.disabled = true;
+      closeButton.dataset.disabledState = "unsupported";
+      closeButton.title = "このAIはここから終了できません";
+      closeButton.setAttribute("aria-label", "このAIはここから終了できません");
+    } else if (effectiveStatusKey === "running") {
+      closeButton.disabled = true;
+      closeButton.dataset.disabledState = "running";
+      closeButton.title = "作業中は終了できません";
+      closeButton.setAttribute("aria-label", "作業中は終了できません");
+    } else {
+      closeButton.disabled = false;
+      closeButton.dataset.disabledState = "ready";
+      closeButton.title = closeButtonLabel(session);
+      closeButton.setAttribute("aria-label", closeButtonLabel(session));
       closeButton.addEventListener("click", async () => {
         closeButton.disabled = true;
-        const previous = closeButton.textContent;
-        closeButton.textContent = session.sourceType === "browser" ? "閉じています" : "停止しています";
+        closeButton.textContent = "…";
         try {
           await closeSession(session);
         } catch {
-          closeButton.textContent = "閉じられませんでした";
+          closeButton.textContent = "×";
           closeButton.disabled = false;
+          closeButton.dataset.disabledState = "ready";
+          pushNotice("閉じられませんでした", `${decoratedAgentName(session, agentOrdinals)} を閉じられませんでした。`, "warning");
+          renderNoticeFeed();
           return;
         }
 
+        removeSessionFromView(session);
+        void refresh();
         setTimeout(() => {
-          closeButton.textContent = previous;
           closeButton.disabled = false;
+          closeButton.textContent = "×";
+          closeButton.dataset.disabledState = "ready";
         }, 1400);
       });
-    } else {
-      closeButton.hidden = true;
     }
-
-    const hideButton = node.querySelector(".hide-button");
-
-    const hideSession = () => {
-      hiddenSessionIds.add(session.id);
-      notificationSessions.delete(session.id);
-      saveHiddenSessionIds();
-      rerender();
-    };
-
-    hideButton.addEventListener("click", hideSession);
 
     cardsRoot.append(node);
   }
@@ -1864,7 +1952,7 @@ function renderScene(sessions, speciesBySessionId, agentOrdinals) {
     node.classList.add(meta.className);
     node.dataset.activity = activity.key;
     node.dataset.mood = mood;
-    node.dataset.state = session.statusKey;
+    node.dataset.state = sessionEffectiveStatusKey(session);
     node.dataset.stale = isStaleSession(session) ? "true" : "false";
     node.dataset.species = species;
 
@@ -1894,18 +1982,33 @@ function rerender() {
   syncRuntimeBadge();
   syncNotificationButton();
   renderStats(displayedSessions);
-  renderHiddenTray(latestSnapshot);
   renderStaleTray(visibleSessions);
   renderNoticeFeed();
   renderWarnings(latestSnapshot?.warnings || []);
   renderCards(displayedSessions, speciesBySessionId, agentOrdinals);
   renderScene(displayedSessions, speciesBySessionId, agentOrdinals);
-  restoreHiddenButton.disabled = hiddenSessionIds.size === 0;
-  restoreHiddenButton.textContent =
-    hiddenSessionIds.size === 0 ? "隠したAIはありません" : `隠したAIを戻す (${hiddenSessionIds.size})`;
 }
 
-async function refresh() {
+async function refresh(options = {}) {
+  const { manual = false } = options;
+
+  if (refreshInFlight) {
+    if (manual) {
+      setRefreshButtonState(true);
+      try {
+        await refreshInFlight;
+      } finally {
+        setRefreshButtonState(false);
+      }
+    }
+    return refreshInFlight;
+  }
+
+  const refreshTask = (async () => {
+    if (manual) {
+      setRefreshButtonState(true);
+    }
+
   try {
     const response = await fetch("/api/snapshot", { cache: "no-store" });
     const rawSnapshot = await response.json();
@@ -1932,6 +2035,18 @@ async function refresh() {
     const body = document.createElement("p");
     body.textContent = "サーバーが起動しているか確認してください。";
     warningsRoot.append(title, body);
+  } finally {
+    if (manual) {
+      setRefreshButtonState(false);
+    }
+  }
+  })();
+
+  refreshInFlight = refreshTask;
+  try {
+    await refreshTask;
+  } finally {
+    refreshInFlight = null;
   }
 }
 
@@ -1986,11 +2101,8 @@ notificationToggleButton?.addEventListener("click", async () => {
   renderNoticeFeed();
 });
 
-restoreHiddenButton.addEventListener("click", () => {
-  hiddenSessionIds = new Set();
-  saveHiddenSessionIds();
-  notificationBaselineReady = false;
-  rerender();
+refreshButton?.addEventListener("click", () => {
+  void refresh({ manual: true });
 });
 
 compactToggleButton?.addEventListener("click", () => {
@@ -2022,4 +2134,6 @@ if (compactMode && runningInsideDesktopApp()) {
   resizeWindowForCompact(true);
 }
 refresh();
-setInterval(refresh, 8000);
+setInterval(() => {
+  void refresh();
+}, 8000);

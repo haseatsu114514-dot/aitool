@@ -7,11 +7,14 @@ const CODEX_DB = path.join(os.homedir(), ".codex", "state_5.sqlite");
 const VERY_RECENT_THREAD_MS = 5 * 60 * 1000;
 const RECENT_THREAD_MS = 20 * 60 * 1000;
 const RUNNING_ACTIVITY_MS = 90 * 1000;
+const FRONTMOST_THINKING_MS = 6 * 60 * 1000;
 const STRONG_CPU_THRESHOLD = 18;
 const SOFT_CPU_THRESHOLD = 2;
 const MIN_PROGRESS_GAP_MS = 20 * 1000;
+const ACTIVE_STATUS_PATTERN =
+  /コンテキストを自動的に圧縮しています|コンテキスト.*圧縮中|圧縮しています|圧縮中|思考中|試行中|考え中|推論中|処理中|分析中|thinking|reasoning|processing|compressing|compacting|summarizing context|summarising context|trying/i;
 
-function hasRecentProgress(threadUpdatedAt, threadCreatedAt, now) {
+function hasMeaningfulProgress(threadUpdatedAt, threadCreatedAt) {
   if (!threadUpdatedAt) {
     return false;
   }
@@ -20,15 +23,29 @@ function hasRecentProgress(threadUpdatedAt, threadCreatedAt, now) {
     return false;
   }
 
-  return now - threadUpdatedAt < RUNNING_ACTIVITY_MS;
+  return true;
 }
 
-function buildState(now, threadUpdatedAt, threadCreatedAt, summary) {
+function hasRecentProgress(threadUpdatedAt, threadCreatedAt, now) {
+  return hasMeaningfulProgress(threadUpdatedAt, threadCreatedAt) && now - threadUpdatedAt < RUNNING_ACTIVITY_MS;
+}
+
+function hasActiveLanguage(...values) {
+  return ACTIVE_STATUS_PATTERN.test(values.filter(Boolean).join(" "));
+}
+
+function buildState(now, threadUpdatedAt, threadCreatedAt, summary, activeText = "") {
   const activeRecently = hasRecentProgress(threadUpdatedAt, threadCreatedAt, now);
+  const activeHint = hasActiveLanguage(activeText);
   const cpuActive = summary.cpu >= STRONG_CPU_THRESHOLD;
-  const warmFrontmost = summary.frontmost && (activeRecently || summary.cpu >= SOFT_CPU_THRESHOLD);
-  const backgroundContinuing = activeRecently && summary.cpu >= SOFT_CPU_THRESHOLD;
-  const running = cpuActive || warmFrontmost || backgroundContinuing;
+  const frontmostThinking =
+    summary.frontmost &&
+    ((hasMeaningfulProgress(threadUpdatedAt, threadCreatedAt) && now - threadUpdatedAt < FRONTMOST_THINKING_MS) ||
+      activeHint);
+  const warmFrontmost = summary.frontmost && (frontmostThinking || summary.cpu >= SOFT_CPU_THRESHOLD);
+  const backgroundContinuing = (activeRecently || activeHint) && summary.cpu >= SOFT_CPU_THRESHOLD;
+  const hintedRunning = activeHint && summary.processCount > 0;
+  const running = cpuActive || warmFrontmost || backgroundContinuing || hintedRunning;
 
   return running
     ? { statusKey: "running", statusLabel: "作業中" }
@@ -125,14 +142,19 @@ export async function collectCodexSessions(systemState) {
           .filter(Boolean);
         const taskTitle = truncate(firstMeaningfulLine(thread.title), 90);
         const summaryLine = bodyLines.length > 1 ? truncate(bodyLines.slice(1).join(" / "), 120) : null;
+        const activeText = [taskTitle, summaryLine].filter(Boolean).join(" ");
         const state =
           index === 0
-            ? buildState(Date.now(), threadUpdatedAt, threadCreatedAt, summary)
+            ? buildState(Date.now(), threadUpdatedAt, threadCreatedAt, summary, activeText)
             : {
                 statusKey:
-                  hasRecentProgress(threadUpdatedAt, threadCreatedAt, Date.now()) ? "running" : "waiting",
+                  hasRecentProgress(threadUpdatedAt, threadCreatedAt, Date.now()) || hasActiveLanguage(activeText)
+                    ? "running"
+                    : "waiting",
                 statusLabel:
-                  hasRecentProgress(threadUpdatedAt, threadCreatedAt, Date.now()) ? "作業中" : "待機中",
+                  hasRecentProgress(threadUpdatedAt, threadCreatedAt, Date.now()) || hasActiveLanguage(activeText)
+                    ? "作業中"
+                    : "待機中",
               };
 
         return {

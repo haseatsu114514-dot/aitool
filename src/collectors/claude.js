@@ -11,8 +11,11 @@ import { findProcesses, summarizeProcesses } from "./system.js";
 
 const CLAUDE_APP_DIR = path.join(os.homedir(), "Library", "Application Support", "Claude");
 const RUNNING_ACTIVITY_MS = 90 * 1000;
+const FRONTMOST_THINKING_MS = 6 * 60 * 1000;
 const STRONG_CPU_THRESHOLD = 10;
 const SOFT_CPU_THRESHOLD = 1.5;
+const ACTIVE_STATUS_PATTERN =
+  /コンテキストを自動的に圧縮しています|コンテキスト.*圧縮中|圧縮しています|圧縮中|思考中|試行中|考え中|推論中|処理中|分析中|thinking|reasoning|processing|compressing|compacting|summarizing context|summarising context|trying/i;
 
 async function loadLatestSession(rootDir, fileMatcher) {
   const files = await listFilesRecursive(rootDir, (fullPath) => fileMatcher.test(path.basename(fullPath)), 5);
@@ -82,12 +85,19 @@ async function loadRecentSessions(rootDir, fileMatcher, maxSessions = 4) {
   return (recentSessions.length ? recentSessions : sessions).slice(0, maxSessions);
 }
 
-function buildStatus(now, lastActivityAt, summary) {
+function hasActiveLanguage(...values) {
+  return ACTIVE_STATUS_PATTERN.test(values.filter(Boolean).join(" "));
+}
+
+function buildStatus(now, lastActivityAt, summary, activeText = "") {
   const activeRecently = lastActivityAt && now - lastActivityAt < RUNNING_ACTIVITY_MS;
+  const activeHint = hasActiveLanguage(activeText);
+  const frontmostThinking = summary.frontmost && lastActivityAt && now - lastActivityAt < FRONTMOST_THINKING_MS;
   const cpuActive = summary.cpu >= STRONG_CPU_THRESHOLD;
-  const warmFrontmost = summary.frontmost && (activeRecently || summary.cpu >= SOFT_CPU_THRESHOLD);
-  const backgroundContinuing = activeRecently && summary.cpu >= SOFT_CPU_THRESHOLD;
-  const running = cpuActive || warmFrontmost || backgroundContinuing;
+  const warmFrontmost = summary.frontmost && (frontmostThinking || summary.cpu >= SOFT_CPU_THRESHOLD || activeHint);
+  const backgroundContinuing = (activeRecently || activeHint) && summary.cpu >= SOFT_CPU_THRESHOLD;
+  const hintedRunning = activeHint && summary.processCount > 0;
+  const running = cpuActive || warmFrontmost || backgroundContinuing || hintedRunning;
   return running
     ? { statusKey: "running", statusLabel: "作業中" }
     : { statusKey: "waiting", statusLabel: "待機中" };
@@ -111,9 +121,19 @@ function buildSession({ id, source, sessionData, processSummary, visibleApp, isP
     summaryParts.push(truncate(normalizeWhitespace(sessionData.initialMessage), 70));
   }
 
+  const activeText = [
+    sessionData.title,
+    sessionData.initialMessage,
+    sessionData.status,
+    sessionData.lastStatus,
+    sessionData.activity,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   const status =
-    isPrimary || (recentActivityAt && Date.now() - recentActivityAt < RUNNING_ACTIVITY_MS)
-      ? buildStatus(Date.now(), recentActivityAt, processSummary)
+    isPrimary || hasActiveLanguage(activeText) || (recentActivityAt && Date.now() - recentActivityAt < RUNNING_ACTIVITY_MS)
+      ? buildStatus(Date.now(), recentActivityAt, processSummary, activeText)
       : { statusKey: "waiting", statusLabel: "待機中" };
 
   return {

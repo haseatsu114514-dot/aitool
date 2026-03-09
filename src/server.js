@@ -382,7 +382,7 @@ async function closeSession(payload) {
       return;
     }
 
-    throw new Error("close target not found");
+    return;
   }
 
   if (payload?.sourceType === "cli" || /^claude$/i.test(String(payload?.appName || ""))) {

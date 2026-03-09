@@ -29,15 +29,14 @@
           <button class="filter-button" data-filter="app">アプリ</button>
         </div>
         <div class="toolbar-group">
+          <button class="filter-button subtle" id="refresh-button">更新</button>
           <button class="filter-button subtle" id="compact-toggle">縦長コンパクト</button>
           <button class="filter-button subtle" id="notification-toggle">通知を有効化</button>
-          <button class="filter-button subtle" id="restore-hidden">隠したAIを戻す</button>
         </div>
       </section>
 
       <span id="last-updated" hidden>読み込み中</span>
 
-      <section id="hidden-tray" class="hidden-tray" hidden></section>
       <section id="stale-tray" class="stale-tray" hidden></section>
       <section id="warnings" class="warnings"></section>
 
@@ -87,6 +86,7 @@
           <div class="speech-card">
             <div class="card-top">
               <div class="provider-stack">
+                <button class="close-button close-button-inline" type="button" hidden aria-label="閉じる">×</button>
                 <p class="provider"></p>
                 <span class="variant-chip" hidden></span>
               </div>
@@ -110,10 +110,8 @@
             </div>
 
             <div class="card-actions">
-              <button class="hide-button" type="button">隠す</button>
-              <button class="close-button" type="button" hidden>閉じる</button>
               <button class="reopen-button" type="button" hidden>再開</button>
-              <button class="card-link" type="button" hidden>開いて表示</button>
+              <button class="card-link" type="button" hidden>開く</button>
             </div>
           </div>
         </div>
