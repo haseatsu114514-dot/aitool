@@ -1,0 +1,17 @@
+{
+  "name": "ai-workboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "desktop/main.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "desktop": "electron .",
+    "desktop:build": "node scripts/package-desktop.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.6",
+    "electron": "^36.0.0"
+  }
+}

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI管理ツール</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DotGothic16&family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=Zen+Maru+Gothic:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="room-light room-light-left"></div>
+    <div class="room-light room-light-right"></div>
+
+    <main class="page">
+      <section class="stats" id="stats"></section>
+
+      <section class="toolbar">
+        <div class="toolbar-group" id="filters">
+          <button class="filter-button is-active" data-filter="all">みんな</button>
+          <button class="filter-button" data-filter="running">作業中</button>
+          <button class="filter-button" data-filter="waiting">待機中</button>
+          <button class="filter-button" data-filter="browser">ブラウザ</button>
+          <button class="filter-button" data-filter="app">アプリ</button>
+        </div>
+        <div class="toolbar-group">
+          <button class="filter-button subtle" id="compact-toggle">縦長コンパクト</button>
+          <button class="filter-button subtle" id="notification-toggle">通知を有効化</button>
+          <button class="filter-button subtle" id="restore-hidden">隠したAIを戻す</button>
+        </div>
+      </section>
+
+      <span id="last-updated" hidden>読み込み中</span>
+
+      <section id="hidden-tray" class="hidden-tray" hidden></section>
+      <section id="stale-tray" class="stale-tray" hidden></section>
+      <section id="warnings" class="warnings"></section>
+
+      <section class="room-stage">
+        <div class="room-wall"></div>
+        <div class="room-floor"></div>
+        <div class="stage-switch" role="tablist" aria-label="表示切り替え">
+          <button class="view-button is-active" type="button" data-view="cards">一覧で見る</button>
+          <button class="view-button" type="button" data-view="room">部屋で見る</button>
+        </div>
+        <section id="cards" class="card-grid"></section>
+        <section id="room-overview" class="room-overview">
+          <div class="overview-header">
+            <p class="eyebrow">ROOM VIEW</p>
+            <p class="overview-copy">
+              部屋の様子を見たい時だけ切り替えて、今何をしているかを眺められます。
+            </p>
+          </div>
+          <div id="scene" class="scene-grid"></div>
+        </section>
+      </section>
+
+      <section id="notice-feed" class="notice-feed" hidden></section>
+    </main>
+
+    <template id="stat-template">
+      <article class="stat-card">
+        <p class="stat-label"></p>
+        <strong class="stat-value"></strong>
+        <p class="stat-help"></p>
+      </article>
+    </template>
+
+    <template id="card-template">
+      <article class="session-card">
+        <div class="resident">
+          <div class="resident-avatar" aria-hidden="true">
+            <div class="resident-head">
+              <div class="pet-antenna"></div>
+              <div class="pet-face"></div>
+            </div>
+            <div class="resident-body">
+              <span class="resident-label"></span>
+            </div>
+          </div>
+
+          <div class="speech-card">
+            <div class="card-top">
+              <div class="provider-stack">
+                <p class="provider"></p>
+                <span class="variant-chip" hidden></span>
+              </div>
+              <span class="status-pill"></span>
+            </div>
+            <div class="identity-row">
+              <span class="project-chip" hidden></span>
+              <span class="source-chip"></span>
+            </div>
+
+            <p class="section-label">依頼の要約</p>
+            <h2 class="task-title"></h2>
+            <p class="section-label">今やっていること</p>
+            <p class="summary"></p>
+
+            <div class="meta-row">
+              <span class="workspace"></span>
+              <span class="eta"></span>
+              <span class="activity"></span>
+              <span class="updated"></span>
+            </div>
+
+            <div class="card-actions">
+              <button class="hide-button" type="button">隠す</button>
+              <button class="close-button" type="button" hidden>閉じる</button>
+              <button class="reopen-button" type="button" hidden>再開</button>
+              <button class="card-link" type="button" hidden>開いて表示</button>
+            </div>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <template id="scene-template">
+      <article class="scene-card">
+        <div class="scene-set">
+          <div class="scene-action-chip"></div>
+          <div class="scene-thought"></div>
+          <div class="scene-prop"></div>
+          <div class="scene-pet">
+            <div class="scene-pet-shell">
+              <div class="pet-antenna"></div>
+              <div class="scene-pet-face"></div>
+            </div>
+            <div class="scene-pet-feet"></div>
+          </div>
+          <div class="scene-badge"></div>
+        </div>
+        <p class="scene-name"></p>
+        <p class="scene-now"></p>
+        <p class="scene-task"></p>
+        <p class="scene-place"></p>
+      </article>
+    </template>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
