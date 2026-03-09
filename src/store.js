@@ -1,11 +1,18 @@
 import path from "node:path";
 import { formatDurationJapanese, median, readJson, slugifyTask, writeJson } from "./utils.js";
 
-const STORE_FILE = path.join(process.cwd(), "data", "session-store.json");
 const MAX_HISTORY_PER_KEY = 12;
 
+function resolveStoreFile() {
+  if (process.env.AI_WORKBOARD_DATA_DIR) {
+    return path.join(process.env.AI_WORKBOARD_DATA_DIR, "session-store.json");
+  }
+
+  return path.join(process.cwd(), "data", "session-store.json");
+}
+
 export async function loadStore() {
-  const store = await readJson(STORE_FILE, null);
+  const store = await readJson(resolveStoreFile(), null);
   return (
     store || {
       active: {},
@@ -119,6 +126,6 @@ export async function updateStoreAndApplyEta(sessions) {
 
   store.active = nextActive;
   store.updatedAt = now;
-  await writeJson(STORE_FILE, store);
+  await writeJson(resolveStoreFile(), store);
   return sessions;
 }

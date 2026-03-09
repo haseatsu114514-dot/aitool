@@ -25,7 +25,6 @@
           <p class="header-copy">誰が動いていて、誰が休んでいるかをシンプルに見ます。</p>
         </div>
         <div class="header-meta">
-          <span class="meta-pill" id="runtime-badge">表示先を確認中</span>
           <span class="meta-pill">8秒ごと更新</span>
           <span class="meta-pill">最終更新 <strong id="last-updated">読み込み中</strong></span>
         </div>
@@ -39,8 +38,10 @@
           <button class="filter-button" data-filter="running">作業中</button>
           <button class="filter-button" data-filter="waiting">待機中</button>
           <button class="filter-button" data-filter="browser">ブラウザ</button>
+          <button class="filter-button" data-filter="app">アプリ</button>
         </div>
         <div class="toolbar-group">
+          <button class="filter-button subtle" id="compact-toggle">縦長コンパクト</button>
           <button class="filter-button subtle" id="notification-toggle">通知を有効化</button>
           <button class="filter-button subtle" id="restore-hidden">隠したAIを戻す</button>
         </div>
@@ -99,7 +100,7 @@
               <span class="status-pill"></span>
             </div>
             <div class="identity-row">
-              <span class="project-chip"></span>
+              <span class="project-chip" hidden></span>
               <span class="source-chip"></span>
             </div>
 
@@ -117,6 +118,7 @@
 
             <div class="card-actions">
               <button class="hide-button" type="button">隠す</button>
+              <button class="close-button" type="button" hidden>閉じる</button>
               <button class="reopen-button" type="button" hidden>再開</button>
               <button class="card-link" type="button" hidden>開いて表示</button>
             </div>

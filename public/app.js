@@ -6,6 +6,7 @@ const statTemplate = document.querySelector("#stat-template");
 const cardTemplate = document.querySelector("#card-template");
 const filterButtons = [...document.querySelectorAll(".filter-button[data-filter]")];
 const viewButtons = [...document.querySelectorAll(".view-button[data-view]")];
+const compactToggleButton = document.querySelector("#compact-toggle");
 const notificationToggleButton = document.querySelector("#notification-toggle");
 const restoreHiddenButton = document.querySelector("#restore-hidden");
 const hiddenTray = document.querySelector("#hidden-tray");
@@ -19,10 +20,12 @@ const sceneTemplate = document.querySelector("#scene-template");
 
 const STORAGE_KEY = "ai-workboard-hidden-sessions";
 const VIEW_STORAGE_KEY = "ai-workboard-active-view";
+const COMPACT_STORAGE_KEY = "ai-workboard-compact";
 const NOTIFICATION_STORAGE_KEY = "ai-workboard-notifications";
 const STALE_MS = 30 * 60 * 1000;
 const MAX_NOTICE_ITEMS = 5;
 const SPECIES_TYPES = ["hamster", "cat", "rabbit", "bear"];
+const AUTO_COMPACT_WIDTH = 520;
 
 const PROVIDER_META = {
   Codex: { label: "CX", className: "provider-codex" },
@@ -41,6 +44,7 @@ const PROVIDER_META = {
 
 let activeFilter = "all";
 let activeView = loadViewMode();
+let compactMode = loadCompactMode();
 let hiddenSessionIds = loadHiddenSessionIds();
 let latestSnapshot = null;
 let notificationsEnabled = loadNotificationPreference();
@@ -86,10 +90,82 @@ function sanitizeTaskSeed(value) {
     .trim();
 }
 
+function projectContextName(session) {
+  const location = shortLocation(session);
+  const title = prettyTaskTitle(session);
+  const weakLocations = new Set([
+    "作業フォルダ",
+    "antigravity",
+    "claude",
+    "codex",
+    "new project",
+    "genspark.ai",
+    "gemini.google.com",
+    "notebooklm.google.com",
+    "chatgpt.com",
+  ]);
+  const titleLooksUseful = !looksGenericTitle(session, title) && title.length <= 34;
+  const locationLooksUseful = location && location !== "場所不明" && !weakLocations.has(location.toLowerCase());
+
+  if (titleLooksUseful && !locationLooksUseful) {
+    return clampText(title, 26);
+  }
+
+  if (locationLooksUseful) {
+    return clampText(location, 26);
+  }
+
+  return clampText(titleLooksUseful ? title : session.provider, 26);
+}
+
+function tidyProjectLabel(value) {
+  return clampText(
+    normalizeText(value)
+      .replace(/^(プロジェクト|案件|作業)\s*[:：]\s*/u, "")
+      .replace(/ の(対応|改善|調整|確認|整理|作業|開発|追加|修正|作成)$/u, "")
+      .replace(/(対応|改善|調整|確認|整理|開発|追加|修正|作成)$/u, "")
+      .replace(/づくり$/u, "")
+      .trim(),
+    26,
+  );
+}
+
+function isWeakProjectLabel(value) {
+  const text = normalizeText(value).toLowerCase();
+  return !text || [
+    "作業内容",
+    "内容",
+    "作業",
+    "対応",
+    "改善",
+    "調整",
+    "確認",
+    "整理",
+    "開発",
+    "new project",
+  ].includes(text);
+}
+
 function fallbackJapaneseTask(rawTitle, rawSummary, project) {
   const combined = `${rawTitle} ${rawSummary}`;
   const genericProject = isGenericProjectName(project);
   const scopedProject = genericProject ? "作業内容" : project;
+
+  if (/slide|slides|presentation|deck/i.test(combined)) {
+    return /layout|design|style|spacing/i.test(combined) ? "スライドの見た目調整" : "スライドづくり";
+  }
+
+  if (/(website|web site|landing page|site|homepage)/i.test(combined) && /(content|copy|text|headline)/i.test(combined)) {
+    return "サイト内容の作成";
+  }
+
+  if (/find|missing|search|locate/i.test(combined) && /file|folder|zip|mov|mp4/i.test(combined)) {
+    return "ファイル探し";
+  }
+
+  if (/move|organize|sort|cleanup/i.test(combined) && /file|folder|desktop|data/i.test(combined)) {
+    return "ファイル整理";
+  }
 
   if (/bug|fix|issue|error|warning|debug|crash/i.test(combined)) {
     return `${scopedProject} の不具合対応`;
@@ -125,7 +201,56 @@ function fallbackJapaneseTask(rawTitle, rawSummary, project) {
 function isGenericProjectName(project) {
   return /^(Claude|Codex|ChatGPT|Gemini|Genspark|Antigravity|NotebookLM|Perplexity|Copilot|Grok|DeepSeek)\b/i.test(
     project,
-  ) || /\bAI\b/i.test(project);
+  ) || /\bAI\b/i.test(project) || /^new project$/i.test(String(project || "").trim());
+}
+
+function summarizeBrowserTask(session, rawTitle, rawSummary, project) {
+  const scopedProject = isGenericProjectName(project) ? "作業内容" : project;
+  const combined = normalizeText(`${rawTitle} ${rawSummary}`);
+  const seed = sanitizeTaskSeed(
+    rawTitle
+      .replace(/\|\s*(Claude Code|Claude|ChatGPT|Gemini|Genspark|Perplexity|Copilot|Grok|DeepSeek)\s*$/i, "")
+      .replace(/-\s*(Claude Code|Claude|ChatGPT|Gemini|Genspark|Perplexity|Copilot|Grok|DeepSeek)\s*$/i, "")
+      .trim(),
+  );
+
+  if (looksGenericTitle(session, prettyTaskTitle(session))) {
+    return `${session.provider} の内容確認`;
+  }
+
+  if (/slide|slides|presentation|deck/i.test(combined)) {
+    return /layout|design|style|spacing/i.test(combined) ? "スライドの見た目調整" : "スライド内容の作成";
+  }
+
+  if (/(website|web site|landing page|site|homepage)/i.test(combined) && /(content|copy|text|headline)/i.test(combined)) {
+    return "サイト内容の作成";
+  }
+
+  if (/layout|design|ui|spacing|style/i.test(combined)) {
+    return "画面レイアウトの調整";
+  }
+
+  if (/research|investigate|search/i.test(combined)) {
+    return `${scopedProject} の調査`;
+  }
+
+  if (/image|art|sprite|illustration/i.test(combined)) {
+    return "画像づくり";
+  }
+
+  if (/notify|notification/i.test(combined)) {
+    return "通知まわりの追加";
+  }
+
+  if (seed && !looksMostlyLatin(seed)) {
+    return clampText(seed, 20);
+  }
+
+  if (seed) {
+    return fallbackJapaneseTask(rawTitle, rawSummary, project);
+  }
+
+  return `${session.provider} の内容確認`;
 }
 
 function shortPathLabel(value) {
@@ -139,6 +264,7 @@ function shortPathLabel(value) {
     "apps",
     "browser",
     "desktop",
+    "new project",
     "pages",
     "public",
     "brain",
@@ -231,6 +357,30 @@ function canReopenSession(session) {
   return Boolean(session.url || session.workspace || session.appName);
 }
 
+function canCloseSession(session) {
+  if (session.sourceType === "browser") {
+    return Boolean(session.url && session.appName);
+  }
+
+  if (session.sourceType === "cli") {
+    return /^claude$/i.test(String(session.appName || ""));
+  }
+
+  return Boolean(session.appName);
+}
+
+function closeButtonLabel(session) {
+  if (session.sourceType === "browser") {
+    return "閉じる";
+  }
+
+  if (session.sourceType === "cli") {
+    return "停止";
+  }
+
+  return "アプリを閉じる";
+}
+
 async function reopenSession(session) {
   const response = await fetch("/api/reopen", {
     method: "POST",
@@ -239,6 +389,7 @@ async function reopenSession(session) {
     },
     body: JSON.stringify({
       appName: session.appName || null,
+      sourceType: session.sourceType || null,
       workspace: session.workspace || null,
       url: session.url || null,
     }),
@@ -246,6 +397,24 @@ async function reopenSession(session) {
 
   if (!response.ok) {
     throw new Error("reopen failed");
+  }
+}
+
+async function closeSession(session) {
+  const response = await fetch("/api/close", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      appName: session.appName || null,
+      sourceType: session.sourceType || null,
+      url: session.url || null,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error("close failed");
   }
 }
 
@@ -289,7 +458,7 @@ function prettyTaskTitle(session) {
 function summarizeRequestedTask(session) {
   const rawTitle = normalizeText(session.taskTitle);
   const rawSummary = normalizeText(session.summary);
-  const project = resolveProject(session).name;
+  const project = projectContextName(session);
   const scopedProject = isGenericProjectName(project) ? "作業内容" : project;
   const combined = normalizeText(
     [rawTitle, rawSummary, session.workspace ? shortPathLabel(session.workspace) : ""].filter(Boolean).join(" "),
@@ -299,8 +468,8 @@ function summarizeRequestedTask(session) {
     return `${session.provider} の内容確認`;
   }
 
-  if (session.sourceType === "browser" && looksGenericTitle(session, prettyTaskTitle(session))) {
-    return `${session.provider} の内容確認`;
+  if (session.sourceType === "browser") {
+    return summarizeBrowserTask(session, rawTitle, rawSummary, project);
   }
 
   if (/ai-workboard|workboard|dashboard|monitor|どのAI|一目で分かる|何個AI|進捗|タスク/i.test(combined)) {
@@ -317,10 +486,6 @@ function summarizeRequestedTask(session) {
 
   if (/通知|notify|notification/i.test(combined)) {
     return "通知まわりの追加";
-  }
-
-  if (/ブラウザ|browser|chrome|safari|arc|tab|url|web/i.test(combined)) {
-    return "ブラウザ状況の確認";
   }
 
   if (/デザイン|見た目|UI|レイアウト|layout|色分け|表情|css|html|style/i.test(combined)) {
@@ -381,36 +546,22 @@ function hashText(value) {
 }
 
 function resolveProject(session) {
-  const location = shortLocation(session);
-  const title = prettyTaskTitle(session);
-  const weakLocations = new Set([
-    "作業フォルダ",
-    "antigravity",
-    "claude",
-    "codex",
-    "genspark.ai",
-    "gemini.google.com",
-    "notebooklm.google.com",
-    "chatgpt.com",
-  ]);
-  const titleLooksUseful = !looksGenericTitle(session, title) && title.length <= 34;
-  const locationLooksUseful = location && location !== "場所不明" && !weakLocations.has(location.toLowerCase());
-
-  if (titleLooksUseful && !locationLooksUseful) {
-    return {
-      name: clampText(title, 26),
-    };
+  const summaryName = tidyProjectLabel(summarizeRequestedTask(session));
+  if (!isWeakProjectLabel(summaryName)) {
+    return { name: summaryName };
   }
 
-  if (locationLooksUseful) {
-    return {
-      name: clampText(location, 26),
-    };
+  const titleName = tidyProjectLabel(prettyTaskTitle(session));
+  if (!isWeakProjectLabel(titleName) && !looksGenericTitle(session, titleName)) {
+    return { name: titleName };
   }
 
-  return {
-    name: clampText(titleLooksUseful ? title : session.provider, 26),
-  };
+  const fallbackName = tidyProjectLabel(projectContextName(session));
+  if (!isWeakProjectLabel(fallbackName)) {
+    return { name: fallbackName };
+  }
+
+  return null;
 }
 
 function shuffleList(values) {
@@ -423,13 +574,13 @@ function shuffleList(values) {
 }
 
 function speciesKey(session, projectName = null) {
-  return `${session.id}|${projectName || resolveProject(session).name}`;
+  return `${session.id}|${projectName || resolveProject(session)?.name || prettyTaskTitle(session)}`;
 }
 
 function assignSpecies(sessions) {
   const assignments = new Map();
   const activeKeys = new Set(
-    sessions.map((session) => speciesKey(session, resolveProject(session).name)),
+    sessions.map((session) => speciesKey(session, resolveProject(session)?.name)),
   );
 
   for (const key of [...speciesAssignments.keys()]) {
@@ -441,7 +592,7 @@ function assignSpecies(sessions) {
   const used = new Set();
 
   for (const session of sessions) {
-    const projectName = resolveProject(session).name;
+    const projectName = resolveProject(session)?.name;
     const key = speciesKey(session, projectName);
     const existing = speciesAssignments.get(key);
     if (existing && !used.has(existing)) {
@@ -457,7 +608,7 @@ function assignSpecies(sessions) {
       continue;
     }
 
-    const projectName = resolveProject(session).name;
+    const projectName = resolveProject(session)?.name;
     const key = speciesKey(session, projectName);
     let available = speciesPool.filter((species) => !used.has(species));
 
@@ -538,29 +689,41 @@ function agentBadgeLabel(session) {
 
 function environmentKindLabel(session) {
   if (session.sourceType === "browser") {
-    return "ブラウザ";
+    return "Web版";
   }
 
   if (session.sourceType === "cli") {
-    return "CLI";
+    return "CLI版";
   }
 
-  return "アプリ";
+  return "アプリ版";
 }
 
 function sourceChipLabel(session) {
-  const environment = environmentKindLabel(session);
   const rawSource = normalizeText(session.source || session.appName || "");
   const cleanedSource = rawSource
     .replace(/\s*タブ$/u, "")
     .replace(/\s*デスクトップ$/u, "")
     .trim();
 
-  if (!cleanedSource) {
-    return `環境: ${environment}`;
+  return clampText(cleanedSource, 12);
+}
+
+function effectiveCompactMode() {
+  return compactMode || window.innerWidth <= AUTO_COMPACT_WIDTH;
+}
+
+function resizeWindowForCompact(enabled) {
+  if (!runningInsideDesktopApp() || typeof window.resizeTo !== "function") {
+    return;
   }
 
-  return `環境: ${environment} / ${clampText(cleanedSource, 12)}`;
+  if (enabled) {
+    window.resizeTo(300, 720);
+    return;
+  }
+
+  window.resizeTo(1120, 900);
 }
 
 function buildTaskSummaryDetail(session) {
@@ -690,10 +853,9 @@ function scenePlaceLine(session, activity) {
   };
   const spot = spotMap[activity.key] || "部屋";
   const agent = agentDisplayName(session);
-  const environment = environmentKindLabel(session);
   return location && location !== "場所不明"
-    ? `場所: ${spot} ・ ${environment} ・ ${location} ・ ${agent}`
-    : `場所: ${spot} ・ ${environment} ・ ${agent}`;
+    ? `場所: ${spot} ・ ${location} ・ ${agent}`
+    : `場所: ${spot} ・ ${agent}`;
 }
 
 function runningInsideDesktopApp() {
@@ -701,11 +863,7 @@ function runningInsideDesktopApp() {
 }
 
 function syncRuntimeBadge() {
-  if (!runtimeBadge) {
-    return;
-  }
-
-  runtimeBadge.textContent = runningInsideDesktopApp() ? "今はアプリ版" : "今はブラウザ版";
+  return;
 }
 
 function displayUpdatedMs(session) {
@@ -755,6 +913,10 @@ function loadNotificationPreference() {
   return window.localStorage.getItem(NOTIFICATION_STORAGE_KEY) === "on";
 }
 
+function loadCompactMode() {
+  return window.localStorage.getItem(COMPACT_STORAGE_KEY) === "on";
+}
+
 function saveHiddenSessionIds() {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...hiddenSessionIds]));
 }
@@ -767,16 +929,39 @@ function saveNotificationPreference() {
   window.localStorage.setItem(NOTIFICATION_STORAGE_KEY, notificationsEnabled ? "on" : "off");
 }
 
+function saveCompactMode() {
+  window.localStorage.setItem(COMPACT_STORAGE_KEY, compactMode ? "on" : "off");
+}
+
 function syncViewMode() {
-  cardsRoot.hidden = activeView !== "cards";
-  roomOverview.hidden = activeView !== "room";
+  const compact = effectiveCompactMode();
+  cardsRoot.hidden = !compact && activeView !== "cards";
+  roomOverview.hidden = compact || activeView !== "room";
   if (roomStage) {
     roomStage.dataset.view = activeView;
+    roomStage.dataset.compact = compact ? "true" : "false";
   }
 
   for (const button of viewButtons) {
     button.classList.toggle("is-active", button.dataset.view === activeView);
   }
+}
+
+function syncCompactMode() {
+  const autoCompact = !compactMode && window.innerWidth <= AUTO_COMPACT_WIDTH;
+  const compactActive = compactMode || autoCompact;
+  document.body.classList.toggle("is-compact", compactMode);
+  document.body.classList.toggle("is-auto-compact", autoCompact);
+
+  if (!compactToggleButton) {
+    return;
+  }
+
+  compactToggleButton.classList.toggle("is-active", compactActive);
+  compactToggleButton.textContent = compactActive ? "通常に戻す" : "縦長コンパクト";
+  compactToggleButton.title = compactActive
+    ? "通常の一覧と部屋表示に戻します。"
+    : "作業中だけを縦長で小さく見ます。";
 }
 
 function notificationsSupported() {
@@ -886,7 +1071,7 @@ function rememberNotificationState(snapshot) {
     notificationSessions.set(session.id, {
       statusKey: session.statusKey,
       stale: isStaleSession(session),
-      label: resolveProject(session).name,
+      label: resolveProject(session)?.name || summarizeRequestedTask(session),
       provider: agentDisplayName(session),
       seenAt: Date.now(),
     });
@@ -935,7 +1120,7 @@ function evaluateNotifications(snapshot) {
     const current = {
       statusKey: session.statusKey,
       stale: isStaleSession(session),
-      label: resolveProject(session).name,
+      label: resolveProject(session)?.name || summarizeRequestedTask(session),
       provider: agentDisplayName(session),
       seenAt: Date.now(),
     };
@@ -1016,6 +1201,10 @@ function visibleSessionsFromSnapshot(snapshot) {
 }
 
 function filteredSessions(sessions) {
+  if (effectiveCompactMode()) {
+    return sortSessionsByFreshness(sessions.filter((session) => session.statusKey === "running"));
+  }
+
   return sessions.filter((session) => {
     if (activeFilter === "all") {
       return true;
@@ -1028,6 +1217,9 @@ function filteredSessions(sessions) {
     }
     if (activeFilter === "browser") {
       return session.sourceType === "browser";
+    }
+    if (activeFilter === "app") {
+      return session.sourceType !== "browser";
     }
     return true;
   });
@@ -1205,10 +1397,23 @@ function renderCards(sessions, speciesBySessionId) {
 
     node.querySelector(".resident-label").textContent = agentBadgeLabel(session);
     node.querySelector(".provider").textContent = `${agentName} の作業`;
-    node.querySelector(".project-chip").textContent = `プロジェクト: ${project.name}`;
-    node.querySelector(".project-chip").title = session.workspace || session.url || project.name;
-    node.querySelector(".source-chip").textContent = sourceChipLabel(session);
-    node.querySelector(".source-chip").title = `${environmentKindLabel(session)} / ${session.source || session.appName || agentName}`;
+    const projectChip = node.querySelector(".project-chip");
+    if (project?.name) {
+      projectChip.hidden = false;
+      projectChip.textContent = `プロジェクト: ${project.name}`;
+      projectChip.title = session.workspace || session.url || project.name;
+    } else {
+      projectChip.hidden = true;
+    }
+    const sourceChip = node.querySelector(".source-chip");
+    const sourceLabel = sourceChipLabel(session);
+    if (sourceLabel) {
+      sourceChip.hidden = false;
+      sourceChip.textContent = sourceLabel;
+      sourceChip.title = session.source || session.appName || agentName;
+    } else {
+      sourceChip.hidden = true;
+    }
     node.querySelector(".task-title").textContent = title;
     node.querySelector(".task-title").title = normalizeText(session.taskTitle) || title;
     node.querySelector(".summary").textContent = summary;
@@ -1278,6 +1483,31 @@ function renderCards(sessions, speciesBySessionId) {
       reopenButton.hidden = true;
     }
 
+    const closeButton = node.querySelector(".close-button");
+    if (canCloseSession(session) && session.statusKey !== "running") {
+      closeButton.hidden = false;
+      closeButton.textContent = closeButtonLabel(session);
+      closeButton.addEventListener("click", async () => {
+        closeButton.disabled = true;
+        const previous = closeButton.textContent;
+        closeButton.textContent = session.sourceType === "browser" ? "閉じています" : "停止しています";
+        try {
+          await closeSession(session);
+        } catch {
+          closeButton.textContent = "閉じられませんでした";
+          closeButton.disabled = false;
+          return;
+        }
+
+        setTimeout(() => {
+          closeButton.textContent = previous;
+          closeButton.disabled = false;
+        }, 1400);
+      });
+    } else {
+      closeButton.hidden = true;
+    }
+
     const hideButton = node.querySelector(".hide-button");
 
     const hideSession = () => {
@@ -1339,7 +1569,9 @@ function renderScene(sessions, speciesBySessionId) {
     node.dataset.stale = isStaleSession(session) ? "true" : "false";
     node.dataset.species = species;
 
-    node.querySelector(".scene-name").textContent = `プロジェクト: ${project.name}`;
+    node.querySelector(".scene-name").textContent = project?.name
+      ? `プロジェクト: ${project.name}`
+      : `${agentDisplayName(session)} の作業`;
     node.querySelector(".scene-now").textContent = activity.sceneNow;
     node.querySelector(".scene-task").textContent = sceneTaskLine(session);
     node.querySelector(".scene-task").title = buildTaskSummaryDetail(session);
@@ -1357,6 +1589,7 @@ function rerender() {
   const visibleSessions = visibleSessionsFromSnapshot(latestSnapshot);
   const displayedSessions = filteredSessions(visibleSessions);
   const speciesBySessionId = assignSpecies(visibleSessions);
+  syncCompactMode();
   syncViewMode();
   syncRuntimeBadge();
   syncNotificationButton();
@@ -1454,6 +1687,28 @@ restoreHiddenButton.addEventListener("click", () => {
   hiddenSessionIds = new Set();
   saveHiddenSessionIds();
   notificationBaselineReady = false;
+  rerender();
+});
+
+compactToggleButton?.addEventListener("click", () => {
+  if (effectiveCompactMode()) {
+    compactMode = false;
+    saveCompactMode();
+    resizeWindowForCompact(false);
+    rerender();
+    return;
+  }
+
+  compactMode = true;
+  if (compactMode) {
+    activeView = "cards";
+  }
+  saveCompactMode();
+  resizeWindowForCompact(true);
+  rerender();
+});
+
+window.addEventListener("resize", () => {
   rerender();
 });
 
