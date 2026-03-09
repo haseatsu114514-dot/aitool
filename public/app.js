@@ -759,6 +759,28 @@ function buildTaskSummary(session) {
   return clampText(buildTaskSummaryDetail(session), 34);
 }
 
+function cardHoverDetail(session) {
+  const lines = [
+    agentDisplayName(session),
+    `内容: ${summarizeRequestedTask(session)}`,
+    `状態: ${isStaleSession(session) ? staleLabel(session) || "長く停止中" : session.statusLabel}`,
+    buildTaskSummaryDetail(session),
+  ];
+
+  const location = shortLocation(session);
+  if (location && location !== "場所不明") {
+    lines.push(`場所: ${location}`);
+  }
+
+  if (session.eta?.label) {
+    lines.push(`目安: ${session.eta.label}`);
+  }
+
+  lines.push(`更新: ${formatRelative(session.lastActiveAtIso || session.startedAtIso)}`);
+
+  return lines.join("\n");
+}
+
 function etaLooksClose(etaLabel) {
   if (!etaLabel) {
     return false;
@@ -914,7 +936,12 @@ function loadNotificationPreference() {
 }
 
 function loadCompactMode() {
-  return window.localStorage.getItem(COMPACT_STORAGE_KEY) === "on";
+  const stored = window.localStorage.getItem(COMPACT_STORAGE_KEY);
+  if (stored === null) {
+    return runningInsideDesktopApp();
+  }
+
+  return stored === "on";
 }
 
 function saveHiddenSessionIds() {
@@ -1394,6 +1421,8 @@ function renderCards(sessions, speciesBySessionId) {
     node.dataset.stale = stale ? "true" : "false";
     node.dataset.species = species;
     node.classList.add(meta.className);
+    const hoverDetail = cardHoverDetail(session);
+    node.title = hoverDetail;
 
     node.querySelector(".resident-label").textContent = agentBadgeLabel(session);
     node.querySelector(".provider").textContent = `${agentName} の作業`;
@@ -1418,6 +1447,8 @@ function renderCards(sessions, speciesBySessionId) {
     node.querySelector(".task-title").title = normalizeText(session.taskTitle) || title;
     node.querySelector(".summary").textContent = summary;
     node.querySelector(".summary").title = summaryDetail;
+    node.querySelector(".resident-avatar").title = hoverDetail;
+    node.querySelector(".speech-card").title = hoverDetail;
 
     const pill = node.querySelector(".status-pill");
     pill.textContent = stale ? "30分放置" : session.statusLabel;
@@ -1715,5 +1746,8 @@ window.addEventListener("resize", () => {
 syncViewMode();
 syncRuntimeBadge();
 syncNotificationButton();
+if (compactMode && runningInsideDesktopApp()) {
+  resizeWindowForCompact(true);
+}
 refresh();
 setInterval(refresh, 8000);
