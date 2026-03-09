@@ -10,6 +10,9 @@ import {
 import { findProcesses, summarizeProcesses } from "./system.js";
 
 const CLAUDE_APP_DIR = path.join(os.homedir(), "Library", "Application Support", "Claude");
+const RUNNING_ACTIVITY_MS = 90 * 1000;
+const STRONG_CPU_THRESHOLD = 10;
+const SOFT_CPU_THRESHOLD = 1.5;
 
 async function loadLatestSession(rootDir, fileMatcher) {
   const files = await listFilesRecursive(rootDir, (fullPath) => fileMatcher.test(path.basename(fullPath)), 5);
@@ -80,14 +83,19 @@ async function loadRecentSessions(rootDir, fileMatcher, maxSessions = 4) {
 }
 
 function buildStatus(now, lastActivityAt, summary) {
-  const running = summary.frontmost || summary.cpu >= 5 || (lastActivityAt && now - lastActivityAt < 15 * 60 * 1000);
+  const activeRecently = lastActivityAt && now - lastActivityAt < RUNNING_ACTIVITY_MS;
+  const cpuActive = summary.cpu >= STRONG_CPU_THRESHOLD;
+  const warmFrontmost = summary.frontmost && (activeRecently || summary.cpu >= SOFT_CPU_THRESHOLD);
+  const backgroundContinuing = activeRecently && summary.cpu >= SOFT_CPU_THRESHOLD;
+  const running = cpuActive || warmFrontmost || backgroundContinuing;
   return running
     ? { statusKey: "running", statusLabel: "作業中" }
     : { statusKey: "waiting", statusLabel: "待機中" };
 }
 
 function buildSession({ id, source, sessionData, processSummary, visibleApp, isPrimary }) {
-  const lastActivityAt = sessionData.lastActivityAt || sessionData.createdAt || processSummary.startedAt;
+  const recentActivityAt = sessionData.lastActivityAt || null;
+  const lastActivityAt = recentActivityAt || sessionData.createdAt || processSummary.startedAt;
   const title = truncate(sessionData.title || "Claude のセッション", 90);
   const summaryParts = [];
 
@@ -104,8 +112,8 @@ function buildSession({ id, source, sessionData, processSummary, visibleApp, isP
   }
 
   const status =
-    isPrimary || (lastActivityAt && Date.now() - lastActivityAt < 15 * 60 * 1000)
-      ? buildStatus(Date.now(), lastActivityAt, processSummary)
+    isPrimary || (recentActivityAt && Date.now() - recentActivityAt < RUNNING_ACTIVITY_MS)
+      ? buildStatus(Date.now(), recentActivityAt, processSummary)
       : { statusKey: "waiting", statusLabel: "待機中" };
 
   return {
@@ -187,8 +195,8 @@ export async function collectClaudeSessions(systemState) {
           summary: "セッション情報は見つかりませんでした。",
           workspace: null,
           url: null,
-          statusKey: desktopSummary.frontmost ? "running" : "waiting",
-          statusLabel: desktopSummary.frontmost ? "作業中" : "待機中",
+          statusKey: desktopSummary.cpu >= STRONG_CPU_THRESHOLD ? "running" : "waiting",
+          statusLabel: desktopSummary.cpu >= STRONG_CPU_THRESHOLD ? "作業中" : "待機中",
           startedAt: desktopSummary.startedAt,
           lastActiveAt: desktopSummary.startedAt,
           cpu: desktopSummary.cpu,
@@ -236,8 +244,8 @@ export async function collectClaudeSessions(systemState) {
           summary: "CLI セッションの詳細は見つかりませんでした。",
           workspace: null,
           url: null,
-          statusKey: cliSummary.cpu >= 5 ? "running" : "waiting",
-          statusLabel: cliSummary.cpu >= 5 ? "作業中" : "待機中",
+          statusKey: cliSummary.cpu >= STRONG_CPU_THRESHOLD ? "running" : "waiting",
+          statusLabel: cliSummary.cpu >= STRONG_CPU_THRESHOLD ? "作業中" : "待機中",
           startedAt: cliSummary.startedAt,
           lastActiveAt: cliSummary.startedAt,
           cpu: cliSummary.cpu,

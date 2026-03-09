@@ -98,7 +98,7 @@ function detectSite(url, title) {
 }
 
 function buildBrowserSummary(site, tab) {
-  const activeLabel = tab.active ? "今見ています" : "開いたままです";
+  const activeLabel = tab.isDisplayed ? "表示しています" : "開いたままです";
 
   if (site.provider === "NotebookLM") {
     return `NotebookLM のノートを ${activeLabel}。`;
@@ -125,7 +125,21 @@ function cleanTitle(title, provider) {
   ) || `${provider} を開いています`;
 }
 
-export async function collectBrowserSessions() {
+function stableTabKey(url, title) {
+  if (url) {
+    try {
+      const parsed = new URL(url);
+      const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+      return `${parsed.hostname}${pathname}`;
+    } catch {
+      // ignore invalid URLs
+    }
+  }
+
+  return normalizeWhitespace(String(title || "")).toLowerCase() || "tab";
+}
+
+export async function collectBrowserSessions(systemState = null) {
   const sessions = [];
   const warnings = [];
 
@@ -145,22 +159,24 @@ export async function collectBrowserSessions() {
             continue;
           }
 
+          const isDisplayed = Boolean(systemState?.appStates?.[browser.appName]?.frontmost) && tab.active && tab.window === 1;
+
           sessions.push({
-            id: `browser:${browser.appName}:${site.provider}:${tab.url || tab.title}`,
+            id: `browser:${browser.appName}:${site.provider}:${stableTabKey(tab.url, tab.title)}:${tab.window}:${tab.index}`,
             provider: site.provider,
             source: `${browser.appName} タブ`,
             sourceType: "browser",
             appName: browser.appName,
             taskTitle: cleanTitle(tab.title, site.provider),
-            summary: truncate(buildBrowserSummary(site, tab), 80),
+            summary: truncate(buildBrowserSummary(site, { ...tab, isDisplayed }), 80),
             workspace: null,
             url: tab.url || null,
-            statusKey: tab.active ? "running" : "idle",
-            statusLabel: tab.active ? "表示中" : "開いたまま",
+            statusKey: isDisplayed ? "viewing" : "idle",
+            statusLabel: isDisplayed ? "表示中" : "開いたまま",
             startedAt: null,
-            lastActiveAt: null,
+            lastActiveAt: isDisplayed ? Date.now() : null,
             cpu: null,
-            frontmost: Boolean(tab.active),
+            frontmost: Boolean(isDisplayed),
           });
         }
       } catch (error) {

@@ -9,8 +9,9 @@ import { updateStoreAndApplyEta } from "./store.js";
 function sortSessions(sessions) {
   const order = {
     running: 0,
-    waiting: 1,
-    idle: 2,
+    viewing: 1,
+    waiting: 2,
+    idle: 3,
   };
 
   return [...sessions].sort((a, b) => {
@@ -47,7 +48,7 @@ export async function collectSnapshot() {
   const warnings = [...systemState.warnings];
 
   const results = await Promise.allSettled([
-    collectBrowserSessions(),
+    collectBrowserSessions(systemState),
     collectCodexSessions(systemState),
     collectClaudeSessions(systemState),
     collectAntigravitySessions(systemState),

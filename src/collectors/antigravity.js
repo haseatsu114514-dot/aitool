@@ -12,6 +12,9 @@ import {
 import { findProcesses, summarizeProcesses } from "./system.js";
 
 const ANTIGRAVITY_DIR = path.join(os.homedir(), "Library", "Application Support", "Antigravity");
+const RUNNING_ACTIVITY_MS = 90 * 1000;
+const STRONG_CPU_THRESHOLD = 12;
+const SOFT_CPU_THRESHOLD = 2;
 
 function extractWorkspaceIds(lsofOutput) {
   const matches = [...String(lsofOutput).matchAll(/workspaceStorage\/([^/]+)\/state\.vscdb/g)];
@@ -220,8 +223,11 @@ export async function collectAntigravitySessions(systemState) {
   }
 
   const lastLogActivity = await getLatestLogActivity();
-  const runningState =
-    summary.frontmost || summary.cpu >= 8 || (lastLogActivity && Date.now() - lastLogActivity < 15 * 60 * 1000);
+  const recentLogActivity = lastLogActivity && Date.now() - lastLogActivity < RUNNING_ACTIVITY_MS;
+  const cpuActive = summary.cpu >= STRONG_CPU_THRESHOLD;
+  const warmFrontmost = summary.frontmost && (recentLogActivity || summary.cpu >= SOFT_CPU_THRESHOLD);
+  const backgroundContinuing = recentLogActivity && summary.cpu >= SOFT_CPU_THRESHOLD;
+  const runningState = cpuActive || warmFrontmost || backgroundContinuing;
 
   const primaryFile = findPrimaryFile(workspaceState);
   const displayWorkspace = primaryFile ? path.dirname(primaryFile) : workspacePath;

@@ -23,6 +23,8 @@ const VIEW_STORAGE_KEY = "ai-workboard-active-view";
 const COMPACT_STORAGE_KEY = "ai-workboard-compact";
 const NOTIFICATION_STORAGE_KEY = "ai-workboard-notifications";
 const STALE_MS = 30 * 60 * 1000;
+const SNAPSHOT_GRACE_MS = 24 * 1000;
+const COMPACT_VISIBILITY_GRACE_MS = 24 * 1000;
 const MAX_NOTICE_ITEMS = 5;
 const SPECIES_TYPES = ["hamster", "cat", "rabbit", "bear"];
 const AUTO_COMPACT_WIDTH = 520;
@@ -52,13 +54,7 @@ let notificationBaselineReady = false;
 let noticeFeed = [];
 const speciesAssignments = new Map();
 const notificationSessions = new Map();
-
-const SPECIES_LABELS = {
-  hamster: "ハム",
-  cat: "猫",
-  rabbit: "うさ",
-  bear: "くま",
-};
+const sessionContinuityCache = new Map();
 
 function clampText(value, maxLength = 68) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -764,6 +760,32 @@ function agentBadgeLabel(session) {
   return labels[name] || clampText(name, 3).toUpperCase();
 }
 
+function buildAgentOrdinals(sessions) {
+  const grouped = new Map();
+  const ordinals = new Map();
+
+  for (const session of sortSessionsByFreshness(sessions)) {
+    const name = agentDisplayName(session);
+    const current = grouped.get(name) || 0;
+    grouped.set(name, current + 1);
+    ordinals.set(session.id, current + 1);
+  }
+
+  return { counts: grouped, ordinals };
+}
+
+function decoratedAgentName(session, agentOrdinals) {
+  const name = agentDisplayName(session);
+  const count = agentOrdinals?.counts?.get(name) || 0;
+  const order = agentOrdinals?.ordinals?.get(session.id) || 0;
+
+  if (count <= 1 || !order) {
+    return name;
+  }
+
+  return `${name} (${order})`;
+}
+
 function environmentKindLabel(session) {
   if (session.sourceType === "browser") {
     return "Web版";
@@ -774,6 +796,105 @@ function environmentKindLabel(session) {
   }
 
   return "アプリ版";
+}
+
+function sessionCacheKey(session) {
+  return (
+    session.id ||
+    [
+      session.provider,
+      session.sourceType,
+      session.appName,
+      session.url,
+      session.workspace,
+      session.taskTitle,
+    ]
+      .filter(Boolean)
+      .join("|")
+  );
+}
+
+function stabilizeSnapshot(snapshot) {
+  const now = Date.now();
+  const incomingSessions = snapshot?.sessions || [];
+  const incomingKeys = new Set();
+  const stabilizedSessions = [];
+  const nextCache = new Map();
+
+  for (const session of incomingSessions) {
+    const key = sessionCacheKey(session);
+    const previous = sessionContinuityCache.get(key);
+    const lastRunningAt =
+      session.statusKey === "running"
+        ? now
+        : previous?.lastRunningAt || previous?.session?.__lastRunningAt || null;
+    const lastVisibleAt =
+      session.statusKey === "running" || session.statusKey === "viewing"
+        ? now
+        : previous?.lastVisibleAt || previous?.session?.__lastVisibleAt || null;
+
+    incomingKeys.add(key);
+
+    const stabilized = {
+      ...(previous?.session || {}),
+      ...session,
+      __cacheKey: key,
+      __retained: false,
+      __missingSince: null,
+      __lastSeenAt: now,
+      __lastRunningAt: lastRunningAt,
+      __lastVisibleAt: lastVisibleAt,
+    };
+
+    stabilizedSessions.push(stabilized);
+    nextCache.set(key, {
+      session: stabilized,
+      lastSeenAt: now,
+      lastRunningAt,
+      lastVisibleAt,
+      missingSince: null,
+    });
+  }
+
+  for (const [key, previous] of sessionContinuityCache) {
+    if (incomingKeys.has(key)) {
+      continue;
+    }
+
+    const missingSince = previous.missingSince || now;
+    if (now - missingSince > SNAPSHOT_GRACE_MS) {
+      continue;
+    }
+
+    const retained = {
+      ...previous.session,
+      __cacheKey: key,
+      __retained: true,
+      __missingSince: missingSince,
+      __lastSeenAt: previous.lastSeenAt || now,
+      __lastRunningAt: previous.lastRunningAt || previous.session?.__lastRunningAt || null,
+      __lastVisibleAt: previous.lastVisibleAt || previous.session?.__lastVisibleAt || null,
+    };
+
+    stabilizedSessions.push(retained);
+    nextCache.set(key, {
+      session: retained,
+      lastSeenAt: previous.lastSeenAt || now,
+      lastRunningAt: previous.lastRunningAt || previous.session?.__lastRunningAt || null,
+      lastVisibleAt: previous.lastVisibleAt || previous.session?.__lastVisibleAt || null,
+      missingSince,
+    });
+  }
+
+  sessionContinuityCache.clear();
+  for (const [key, value] of nextCache) {
+    sessionContinuityCache.set(key, value);
+  }
+
+  return {
+    ...snapshot,
+    sessions: stabilizedSessions,
+  };
 }
 
 function sourceChipLabel(session) {
@@ -805,11 +926,24 @@ function visualStatusState(session, stale) {
     return "stale";
   }
 
-  if (session.statusLabel === "表示中") {
+  if (session.statusKey === "viewing" || session.statusLabel === "表示中") {
     return "viewing";
   }
 
   return session.statusKey;
+}
+
+function shouldKeepVisibleInCompact(session) {
+  if (session.statusKey === "running" || session.statusKey === "viewing") {
+    return true;
+  }
+
+  if (isStaleSession(session)) {
+    return false;
+  }
+
+  const lastVisibleAt = session.__lastVisibleAt || session.__lastRunningAt;
+  return typeof lastVisibleAt === "number" && Date.now() - lastVisibleAt < COMPACT_VISIBILITY_GRACE_MS;
 }
 
 function effectiveCompactMode() {
@@ -822,7 +956,7 @@ function resizeWindowForCompact(enabled) {
   }
 
   if (enabled) {
-    window.resizeTo(300, 720);
+    window.resizeTo(236, 760);
     return;
   }
 
@@ -839,6 +973,10 @@ function buildTaskSummaryDetail(session) {
 
   if (session.statusKey === "waiting") {
     return `${task} の返事待ちです。`;
+  }
+
+  if (session.statusKey === "viewing") {
+    return `${task} の画面を表示しています。`;
   }
 
   if (session.statusKey === "idle") {
@@ -884,10 +1022,6 @@ function cardHoverDetail(session) {
   return lines.join("\n");
 }
 
-function speciesLabel(species) {
-  return SPECIES_LABELS[species] || "動物";
-}
-
 function etaLooksClose(etaLabel) {
   if (!etaLabel) {
     return false;
@@ -906,7 +1040,7 @@ function resolveMood(session) {
     return "rest";
   }
 
-  if (session.statusKey === "waiting" || session.statusKey === "idle") {
+  if (session.statusKey === "waiting" || session.statusKey === "idle" || session.statusKey === "viewing") {
     return "rest";
   }
 
@@ -927,6 +1061,14 @@ function resolveActivity(session) {
   }
 
   if (session.sourceType === "browser") {
+    if (session.statusKey === "viewing") {
+      return {
+        key: "window",
+        label: "表示中",
+        sceneNow: "いま: 画面を見ています",
+      };
+    }
+
     return {
       key: session.statusKey === "running" ? "window" : "sleep",
       label: session.statusKey === "running" ? "ブラウザ確認" : "開いたまま",
@@ -1000,14 +1142,23 @@ function displayUpdatedMs(session) {
     return Date.now();
   }
 
+  if (shouldKeepVisibleInCompact(session) && session.statusKey !== "running") {
+    return session.__lastVisibleAt || session.__lastRunningAt || sessionActivityMs(session) || 0;
+  }
+
+  if (session.__retained) {
+    return session.__lastSeenAt || sessionActivityMs(session) || 0;
+  }
+
   return sessionActivityMs(session) || 0;
 }
 
 function sortSessionsByFreshness(sessions) {
   const stateOrder = {
     running: 0,
-    waiting: 1,
-    idle: 2,
+    viewing: 1,
+    waiting: 2,
+    idle: 3,
   };
 
   return [...sessions].sort((a, b) => {
@@ -1336,7 +1487,9 @@ function visibleSessionsFromSnapshot(snapshot) {
 
 function filteredSessions(sessions) {
   if (effectiveCompactMode()) {
-    return sortSessionsByFreshness(sessions.filter((session) => session.statusKey === "running"));
+    return sortSessionsByFreshness(
+      sessions.filter((session) => shouldKeepVisibleInCompact(session) || !isStaleSession(session)),
+    );
   }
 
   return sessions.filter((session) => {
@@ -1347,7 +1500,7 @@ function filteredSessions(sessions) {
       return session.statusKey === "running";
     }
     if (activeFilter === "waiting") {
-      return session.statusKey === "waiting" || session.statusKey === "idle";
+      return session.statusKey === "waiting" || session.statusKey === "idle" || session.statusKey === "viewing";
     }
     if (activeFilter === "browser") {
       return session.sourceType === "browser";
@@ -1496,7 +1649,7 @@ function renderStaleTray(sessions) {
   staleTray.append(title, list);
 }
 
-function renderCards(sessions, speciesBySessionId) {
+function renderCards(sessions, speciesBySessionId, agentOrdinals) {
   cardsRoot.innerHTML = "";
 
   if (!sessions.length) {
@@ -1518,7 +1671,7 @@ function renderCards(sessions, speciesBySessionId) {
     const summaryDetail = buildTaskSummaryDetail(session);
     const project = resolveProject(session);
     const species = speciesBySessionId.get(session.id) || SPECIES_TYPES[0];
-    const agentName = agentDisplayName(session);
+    const agentName = decoratedAgentName(session, agentOrdinals);
 
     const node = cardTemplate.content.firstElementChild.cloneNode(true);
     const stale = isStaleSession(session);
@@ -1532,10 +1685,6 @@ function renderCards(sessions, speciesBySessionId) {
     node.title = hoverDetail;
 
     node.querySelector(".resident-label").textContent = agentBadgeLabel(session);
-    const speciesChip = node.querySelector(".species-chip");
-    speciesChip.hidden = false;
-    speciesChip.textContent = speciesLabel(species);
-    speciesChip.title = `${speciesLabel(species)} モチーフ`;
     node.querySelector(".provider").textContent = agentName;
     const variantChip = node.querySelector(".variant-chip");
     const variantLabel = agentVariantLabel(session);
@@ -1558,7 +1707,7 @@ function renderCards(sessions, speciesBySessionId) {
     if (sourceLabel) {
       sourceChip.hidden = false;
       sourceChip.textContent = sourceLabel;
-      sourceChip.title = session.source || session.appName || agentName;
+      sourceChip.title = session.source || session.appName || agentDisplayName(session);
     } else {
       sourceChip.hidden = true;
     }
@@ -1673,7 +1822,7 @@ function renderCards(sessions, speciesBySessionId) {
   }
 }
 
-function renderScene(sessions, speciesBySessionId) {
+function renderScene(sessions, speciesBySessionId, agentOrdinals) {
   sceneRoot.innerHTML = "";
 
   if (!sessions.length) {
@@ -1721,7 +1870,7 @@ function renderScene(sessions, speciesBySessionId) {
 
     node.querySelector(".scene-name").textContent = project?.name
       ? `プロジェクト: ${project.name}`
-      : `${agentDisplayName(session)} の作業`;
+      : `${decoratedAgentName(session, agentOrdinals)} の作業`;
     node.querySelector(".scene-now").textContent = activity.sceneNow;
     node.querySelector(".scene-task").textContent = sceneTaskLine(session);
     node.querySelector(".scene-task").title = buildTaskSummaryDetail(session);
@@ -1730,7 +1879,7 @@ function renderScene(sessions, speciesBySessionId) {
     node.querySelector(".scene-action-chip").textContent = activity.label;
     node.querySelector(".scene-place").textContent = scenePlaceLine(session, activity);
     node.querySelector(".scene-badge").textContent = agentBadgeLabel(session);
-    node.querySelector(".scene-badge").title = agentDisplayName(session);
+    node.querySelector(".scene-badge").title = decoratedAgentName(session, agentOrdinals);
     sceneRoot.append(node);
   }
 }
@@ -1739,6 +1888,7 @@ function rerender() {
   const visibleSessions = visibleSessionsFromSnapshot(latestSnapshot);
   const displayedSessions = filteredSessions(visibleSessions);
   const speciesBySessionId = assignSpecies(visibleSessions);
+  const agentOrdinals = buildAgentOrdinals(visibleSessions);
   syncCompactMode();
   syncViewMode();
   syncRuntimeBadge();
@@ -1748,8 +1898,8 @@ function rerender() {
   renderStaleTray(visibleSessions);
   renderNoticeFeed();
   renderWarnings(latestSnapshot?.warnings || []);
-  renderCards(displayedSessions, speciesBySessionId);
-  renderScene(displayedSessions, speciesBySessionId);
+  renderCards(displayedSessions, speciesBySessionId, agentOrdinals);
+  renderScene(displayedSessions, speciesBySessionId, agentOrdinals);
   restoreHiddenButton.disabled = hiddenSessionIds.size === 0;
   restoreHiddenButton.textContent =
     hiddenSessionIds.size === 0 ? "隠したAIはありません" : `隠したAIを戻す (${hiddenSessionIds.size})`;
@@ -1758,18 +1908,21 @@ function rerender() {
 async function refresh() {
   try {
     const response = await fetch("/api/snapshot", { cache: "no-store" });
-    const snapshot = await response.json();
+    const rawSnapshot = await response.json();
+    const snapshot = stabilizeSnapshot(rawSnapshot);
     evaluateNotifications(snapshot);
     latestSnapshot = snapshot;
     rerender();
 
-    lastUpdated.textContent = new Date(snapshot.generatedAt).toLocaleString("ja-JP", {
-      month: "numeric",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
+    if (lastUpdated) {
+      lastUpdated.textContent = new Date(snapshot.generatedAt).toLocaleString("ja-JP", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
+    }
   } catch {
     warningsRoot.hidden = false;
     warningsRoot.innerHTML = "";

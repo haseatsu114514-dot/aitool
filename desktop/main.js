@@ -219,7 +219,7 @@ async function createMainWindow() {
   windowRef = new BrowserWindow({
     width: initialWidth,
     height: initialHeight,
-    minWidth: 300,
+    minWidth: 220,
     minHeight: 360,
     x,
     y,

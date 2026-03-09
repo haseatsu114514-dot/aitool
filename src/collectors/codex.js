@@ -6,11 +6,29 @@ import { findProcesses, summarizeProcesses } from "./system.js";
 const CODEX_DB = path.join(os.homedir(), ".codex", "state_5.sqlite");
 const VERY_RECENT_THREAD_MS = 5 * 60 * 1000;
 const RECENT_THREAD_MS = 20 * 60 * 1000;
+const RUNNING_ACTIVITY_MS = 90 * 1000;
+const STRONG_CPU_THRESHOLD = 18;
+const SOFT_CPU_THRESHOLD = 2;
+const MIN_PROGRESS_GAP_MS = 20 * 1000;
 
-function buildState(now, threadUpdatedAt, summary) {
-  const activeRecently = threadUpdatedAt && now - threadUpdatedAt < 15 * 60 * 1000;
-  const cpuActive = summary.cpu >= 8;
-  const running = summary.frontmost || activeRecently || cpuActive;
+function hasRecentProgress(threadUpdatedAt, threadCreatedAt, now) {
+  if (!threadUpdatedAt) {
+    return false;
+  }
+
+  if (threadCreatedAt && threadUpdatedAt - threadCreatedAt <= MIN_PROGRESS_GAP_MS) {
+    return false;
+  }
+
+  return now - threadUpdatedAt < RUNNING_ACTIVITY_MS;
+}
+
+function buildState(now, threadUpdatedAt, threadCreatedAt, summary) {
+  const activeRecently = hasRecentProgress(threadUpdatedAt, threadCreatedAt, now);
+  const cpuActive = summary.cpu >= STRONG_CPU_THRESHOLD;
+  const warmFrontmost = summary.frontmost && (activeRecently || summary.cpu >= SOFT_CPU_THRESHOLD);
+  const backgroundContinuing = activeRecently && summary.cpu >= SOFT_CPU_THRESHOLD;
+  const running = cpuActive || warmFrontmost || backgroundContinuing;
 
   return running
     ? { statusKey: "running", statusLabel: "作業中" }
@@ -100,6 +118,7 @@ export async function collectCodexSessions(systemState) {
     return {
       sessions: relevantThreads.map((thread, index) => {
         const threadUpdatedAt = thread.updated_at ? thread.updated_at * 1000 : null;
+        const threadCreatedAt = thread.created_at ? thread.created_at * 1000 : null;
         const bodyLines = String(thread.title || "")
           .split(/\r?\n/)
           .map((line) => normalizeWhitespace(line))
@@ -108,12 +127,12 @@ export async function collectCodexSessions(systemState) {
         const summaryLine = bodyLines.length > 1 ? truncate(bodyLines.slice(1).join(" / "), 120) : null;
         const state =
           index === 0
-            ? buildState(Date.now(), threadUpdatedAt, summary)
+            ? buildState(Date.now(), threadUpdatedAt, threadCreatedAt, summary)
             : {
                 statusKey:
-                  threadUpdatedAt && Date.now() - threadUpdatedAt < VERY_RECENT_THREAD_MS ? "running" : "waiting",
+                  hasRecentProgress(threadUpdatedAt, threadCreatedAt, Date.now()) ? "running" : "waiting",
                 statusLabel:
-                  threadUpdatedAt && Date.now() - threadUpdatedAt < VERY_RECENT_THREAD_MS ? "作業中" : "待機中",
+                  hasRecentProgress(threadUpdatedAt, threadCreatedAt, Date.now()) ? "作業中" : "待機中",
               };
 
         return {
@@ -128,7 +147,7 @@ export async function collectCodexSessions(systemState) {
           url: null,
           statusKey: state.statusKey,
           statusLabel: state.statusLabel,
-          startedAt: thread.created_at ? thread.created_at * 1000 : summary.startedAt,
+          startedAt: threadCreatedAt || summary.startedAt,
           lastActiveAt: threadUpdatedAt,
           cpu: index === 0 ? summary.cpu : null,
           frontmost: index === 0 ? summary.frontmost : false,
