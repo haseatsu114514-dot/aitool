@@ -125,22 +125,55 @@ function cleanTitle(title, provider) {
   ) || `${provider} を開いています`;
 }
 
-function stableTabKey(url, title) {
-  if (url) {
-    try {
-      const parsed = new URL(url);
-      const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
-      return `${parsed.hostname}${pathname}`;
-    } catch {
-      // ignore invalid URLs
-    }
+function normalizeBrowserUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    parsed.hash = "";
+    const pathname = parsed.pathname.replace(/\/+$/, "") || "/";
+    const search = parsed.search || "";
+    return `${parsed.hostname}${pathname}${search}`;
+  } catch {
+    return normalizeWhitespace(String(rawUrl || ""));
+  }
+}
+
+function stableTabKey(browserAppName, siteProvider, tab) {
+  const normalizedUrl = normalizeBrowserUrl(tab.url);
+  if (normalizedUrl) {
+    return `${browserAppName}:${siteProvider}:${normalizedUrl}`;
   }
 
-  return normalizeWhitespace(String(title || "")).toLowerCase() || "tab";
+  const windowIndex = Number(tab.window) || 0;
+  const tabIndex = Number(tab.index) || 0;
+  return `${browserAppName}:${siteProvider}:${windowIndex}:${tabIndex}`;
+}
+
+function shouldReplaceBrowserSession(current, next) {
+  if (!current) {
+    return true;
+  }
+
+  if (Boolean(next.frontmost) !== Boolean(current.frontmost)) {
+    return Boolean(next.frontmost);
+  }
+
+  if ((next.statusKey === "viewing") !== (current.statusKey === "viewing")) {
+    return next.statusKey === "viewing";
+  }
+
+  if ((next.browserWindow || 999) !== (current.browserWindow || 999)) {
+    return (next.browserWindow || 999) < (current.browserWindow || 999);
+  }
+
+  if ((next.browserTab || 999) !== (current.browserTab || 999)) {
+    return (next.browserTab || 999) < (current.browserTab || 999);
+  }
+
+  return String(next.taskTitle || "").length > String(current.taskTitle || "").length;
 }
 
 export async function collectBrowserSessions(systemState = null) {
-  const sessions = [];
+  const dedupedSessions = new Map();
   const warnings = [];
 
   await Promise.all(
@@ -161,12 +194,14 @@ export async function collectBrowserSessions(systemState = null) {
 
           const isDisplayed = Boolean(systemState?.appStates?.[browser.appName]?.frontmost) && tab.active && tab.window === 1;
 
-          sessions.push({
-            id: `browser:${browser.appName}:${site.provider}:${stableTabKey(tab.url, tab.title)}:${tab.window}:${tab.index}`,
+          const session = {
+            id: `browser:${stableTabKey(browser.appName, site.provider, tab)}`,
             provider: site.provider,
             source: `${browser.appName} タブ`,
             sourceType: "browser",
             appName: browser.appName,
+            browserWindow: Number(tab.window) || null,
+            browserTab: Number(tab.index) || null,
             taskTitle: cleanTitle(tab.title, site.provider),
             summary: truncate(buildBrowserSummary(site, { ...tab, isDisplayed }), 80),
             workspace: null,
@@ -177,7 +212,12 @@ export async function collectBrowserSessions(systemState = null) {
             lastActiveAt: isDisplayed ? Date.now() : null,
             cpu: null,
             frontmost: Boolean(isDisplayed),
-          });
+          };
+
+          const existing = dedupedSessions.get(session.id);
+          if (shouldReplaceBrowserSession(existing, session)) {
+            dedupedSessions.set(session.id, session);
+          }
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
@@ -189,5 +229,5 @@ export async function collectBrowserSessions(systemState = null) {
     }),
   );
 
-  return { sessions, warnings };
+  return { sessions: [...dedupedSessions.values()], warnings };
 }

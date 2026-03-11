@@ -81,12 +81,23 @@ async function runOsascript(lines, env = {}, language = null) {
   return String(stdout || "").trim();
 }
 
-async function focusChromiumTab(appName, targetUrl) {
+async function focusChromiumTab(appName, targetUrl, windowIndex = null, tabIndex = null) {
   const script = [
     'set browserName to system attribute "BROWSER_APP"',
     'set targetUrl to system attribute "TARGET_URL"',
+    'set targetWindow to system attribute "TARGET_WINDOW"',
+    'set targetTab to system attribute "TARGET_TAB"',
     "tell application browserName",
     "if not running then return \"miss\"",
+    "if targetWindow is not \"\" and targetTab is not \"\" then",
+    "try",
+    "set w to window (targetWindow as integer)",
+    "set active tab index of w to (targetTab as integer)",
+    "set index of w to 1",
+    "activate",
+    "return \"hit\"",
+    "end try",
+    "end if",
     "repeat with w in windows",
     "set tabIndex to 0",
     "repeat with t in tabs of w",
@@ -125,14 +136,30 @@ async function focusChromiumTab(appName, targetUrl) {
     "end urlsMatch",
   ];
 
-  return (await runOsascript(script, { BROWSER_APP: appName, TARGET_URL: targetUrl })) === "hit";
+  return (await runOsascript(script, {
+    BROWSER_APP: appName,
+    TARGET_URL: targetUrl || "",
+    TARGET_WINDOW: windowIndex ? String(windowIndex) : "",
+    TARGET_TAB: tabIndex ? String(tabIndex) : "",
+  })) === "hit";
 }
 
-async function focusSafariTab(targetUrl) {
+async function focusSafariTab(targetUrl, windowIndex = null, tabIndex = null) {
   const script = [
     'set targetUrl to system attribute "TARGET_URL"',
+    'set targetWindow to system attribute "TARGET_WINDOW"',
+    'set targetTab to system attribute "TARGET_TAB"',
     'tell application "Safari"',
     "if not running then return \"miss\"",
+    "if targetWindow is not \"\" and targetTab is not \"\" then",
+    "try",
+    "set w to window (targetWindow as integer)",
+    "set current tab of w to tab (targetTab as integer) of w",
+    "set index of w to 1",
+    "activate",
+    "return \"hit\"",
+    "end try",
+    "end if",
     "repeat with w in windows",
     "repeat with t in tabs of w",
     "try",
@@ -169,17 +196,21 @@ async function focusSafariTab(targetUrl) {
     "end urlsMatch",
   ];
 
-  return (await runOsascript(script, { TARGET_URL: targetUrl })) === "hit";
+  return (await runOsascript(script, {
+    TARGET_URL: targetUrl || "",
+    TARGET_WINDOW: windowIndex ? String(windowIndex) : "",
+    TARGET_TAB: tabIndex ? String(tabIndex) : "",
+  })) === "hit";
 }
 
-async function focusExistingBrowserTarget(appName, targetUrl) {
+async function focusExistingBrowserTarget(appName, targetUrl, windowIndex = null, tabIndex = null) {
   try {
     if (CHROMIUM_BROWSERS.has(appName)) {
-      return await focusChromiumTab(appName, targetUrl);
+      return await focusChromiumTab(appName, targetUrl, windowIndex, tabIndex);
     }
 
     if (appName === "Safari") {
-      return await focusSafariTab(targetUrl);
+      return await focusSafariTab(targetUrl, windowIndex, tabIndex);
     }
   } catch {
     return false;
@@ -203,12 +234,22 @@ async function activateApplication(appName) {
   }
 }
 
-async function closeChromiumTab(appName, targetUrl) {
+async function closeChromiumTab(appName, targetUrl, windowIndex = null, tabIndex = null) {
   const script = [
     'set browserName to system attribute "BROWSER_APP"',
     'set targetUrl to system attribute "TARGET_URL"',
+    'set targetWindow to system attribute "TARGET_WINDOW"',
+    'set targetTab to system attribute "TARGET_TAB"',
     "tell application browserName",
     "if not running then return \"miss\"",
+    "if targetWindow is not \"\" and targetTab is not \"\" then",
+    "try",
+    "set w to window (targetWindow as integer)",
+    "close tab (targetTab as integer) of w",
+    "activate",
+    "return \"hit\"",
+    "end try",
+    "end if",
     "repeat with w in windows",
     "repeat with t in tabs of w",
     "try",
@@ -244,14 +285,29 @@ async function closeChromiumTab(appName, targetUrl) {
     "end urlsMatch",
   ];
 
-  return (await runOsascript(script, { BROWSER_APP: appName, TARGET_URL: targetUrl })) === "hit";
+  return (await runOsascript(script, {
+    BROWSER_APP: appName,
+    TARGET_URL: targetUrl || "",
+    TARGET_WINDOW: windowIndex ? String(windowIndex) : "",
+    TARGET_TAB: tabIndex ? String(tabIndex) : "",
+  })) === "hit";
 }
 
-async function closeSafariTab(targetUrl) {
+async function closeSafariTab(targetUrl, windowIndex = null, tabIndex = null) {
   const script = [
     'set targetUrl to system attribute "TARGET_URL"',
+    'set targetWindow to system attribute "TARGET_WINDOW"',
+    'set targetTab to system attribute "TARGET_TAB"',
     'tell application "Safari"',
     "if not running then return \"miss\"",
+    "if targetWindow is not \"\" and targetTab is not \"\" then",
+    "try",
+    "set w to window (targetWindow as integer)",
+    "close tab (targetTab as integer) of w",
+    "activate",
+    "return \"hit\"",
+    "end try",
+    "end if",
     "repeat with w in windows",
     "repeat with t in tabs of w",
     "try",
@@ -287,17 +343,21 @@ async function closeSafariTab(targetUrl) {
     "end urlsMatch",
   ];
 
-  return (await runOsascript(script, { TARGET_URL: targetUrl })) === "hit";
+  return (await runOsascript(script, {
+    TARGET_URL: targetUrl || "",
+    TARGET_WINDOW: windowIndex ? String(windowIndex) : "",
+    TARGET_TAB: tabIndex ? String(tabIndex) : "",
+  })) === "hit";
 }
 
-async function closeExistingBrowserTarget(appName, targetUrl) {
+async function closeExistingBrowserTarget(appName, targetUrl, windowIndex = null, tabIndex = null) {
   try {
     if (CHROMIUM_BROWSERS.has(appName)) {
-      return await closeChromiumTab(appName, targetUrl);
+      return await closeChromiumTab(appName, targetUrl, windowIndex, tabIndex);
     }
 
     if (appName === "Safari") {
-      return await closeSafariTab(targetUrl);
+      return await closeSafariTab(targetUrl, windowIndex, tabIndex);
     }
   } catch {
     return false;
@@ -341,12 +401,24 @@ async function terminateCliSession(appName) {
 
 async function reopenSession(payload) {
   if (payload?.url) {
-    if (payload.appName && await focusExistingBrowserTarget(payload.appName, payload.url)) {
+    if (
+      payload.appName &&
+      await focusExistingBrowserTarget(
+        payload.appName,
+        payload.url,
+        payload.browserWindow || null,
+        payload.browserTab || null,
+      )
+    ) {
       return;
     }
 
     if (payload.appName) {
-      await execFileAsync("open", ["-a", payload.appName, payload.url], { env: process.env });
+      if (await activateApplication(payload.appName)) {
+        return;
+      }
+
+      await execFileAsync("open", ["-a", payload.appName], { env: process.env });
       return;
     }
 
@@ -378,7 +450,14 @@ async function reopenSession(payload) {
 
 async function closeSession(payload) {
   if (payload?.url && payload.appName) {
-    if (await closeExistingBrowserTarget(payload.appName, payload.url)) {
+    if (
+      await closeExistingBrowserTarget(
+        payload.appName,
+        payload.url,
+        payload.browserWindow || null,
+        payload.browserTab || null,
+      )
+    ) {
       return;
     }
 

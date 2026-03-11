@@ -9,6 +9,7 @@ const viewButtons = [...document.querySelectorAll(".view-button[data-view]")];
 const refreshButton = document.querySelector("#refresh-button");
 const compactToggleButton = document.querySelector("#compact-toggle");
 const notificationToggleButton = document.querySelector("#notification-toggle");
+const archiveTray = document.querySelector("#archive-tray");
 const staleTray = document.querySelector("#stale-tray");
 const noticeFeedRoot = document.querySelector("#notice-feed");
 const runtimeBadge = document.querySelector("#runtime-badge");
@@ -24,8 +25,10 @@ const NOTIFICATION_STORAGE_KEY = "ai-workboard-notifications";
 const STALE_MS = 30 * 60 * 1000;
 const SNAPSHOT_GRACE_MS = 24 * 1000;
 const RUNNING_SNAPSHOT_GRACE_MS = 90 * 1000;
+const BROWSER_SNAPSHOT_GRACE_MS = 60 * 1000;
 const COMPACT_VISIBILITY_GRACE_MS = 24 * 1000;
-const ACTIVE_HINT_GRACE_MS = 12 * 60 * 1000;
+const ACTIVE_HINT_GRACE_MS = 2 * 60 * 1000;
+const TOPIC_REVIEW_MS = 25 * 60 * 1000;
 const MAX_NOTICE_ITEMS = 5;
 const SPECIES_TYPES = ["hamster", "cat", "rabbit", "bear"];
 const AUTO_COMPACT_WIDTH = 520;
@@ -50,7 +53,7 @@ const PROVIDER_META = {
 let activeFilter = "all";
 let activeView = loadViewMode();
 let compactMode = loadCompactMode();
-let hiddenSessionIds = new Set();
+let hiddenSessionIds = loadHiddenSessionIds();
 let latestSnapshot = null;
 let notificationsEnabled = loadNotificationPreference();
 let notificationBaselineReady = false;
@@ -410,11 +413,11 @@ function sessionActivityMs(session) {
 }
 
 function hasActiveStatusCue(session) {
-  const text = normalizeText(
-    [session.statusLabel, session.taskTitle, session.summary, session.source]
-      .filter(Boolean)
-      .join(" "),
-  );
+  if (typeof session.activeHint === "boolean") {
+    return session.activeHint;
+  }
+
+  const text = normalizeText(session.statusLabel);
   return ACTIVE_STATUS_PATTERN.test(text);
 }
 
@@ -430,10 +433,8 @@ function sessionEffectiveStatusKey(session) {
   const now = Date.now();
   const activityMs = sessionActivityMs(session);
   const warmActivity = typeof activityMs === "number" && now - activityMs < ACTIVE_HINT_GRACE_MS;
-  const warmRunning =
-    typeof session.__lastRunningAt === "number" && now - session.__lastRunningAt < ACTIVE_HINT_GRACE_MS;
 
-  return session.frontmost || warmActivity || warmRunning || session.__retained ? "running" : session.statusKey;
+  return session.frontmost && warmActivity ? "running" : session.statusKey;
 }
 
 function sessionEffectiveStatusLabel(session) {
@@ -519,6 +520,8 @@ async function reopenSession(session) {
       sourceType: session.sourceType || null,
       workspace: session.workspace || null,
       url: session.url || null,
+      browserWindow: session.browserWindow || null,
+      browserTab: session.browserTab || null,
     }),
   });
 
@@ -537,6 +540,8 @@ async function closeSession(session) {
       appName: session.appName || null,
       sourceType: session.sourceType || null,
       url: session.url || null,
+      browserWindow: session.browserWindow || null,
+      browserTab: session.browserTab || null,
     }),
   });
 
@@ -760,28 +765,23 @@ function agentDisplayName(session) {
     if (session.sourceType === "cli" || /Claude Code/i.test(session.source || "")) {
       return "Claude Code";
     }
-
-    if (session.sourceType === "browser") {
-      return "Claude Web";
-    }
-
-    return "Claude Desktop";
+    return "Claude";
   }
 
   if (session.provider === "Codex") {
-    return "Codex App";
+    return "Codex";
   }
 
   if (session.provider === "ChatGPT") {
-    return session.sourceType === "browser" ? "ChatGPT Web" : "ChatGPT";
+    return "ChatGPT";
   }
 
   if (session.provider === "Antigravity Web") {
-    return "Antigravity Web";
+    return "Antigravity";
   }
 
   if (session.provider === "Gemini") {
-    return session.sourceType === "browser" ? "Gemini Web" : "Gemini";
+    return "Gemini";
   }
 
   if (session.provider === "NotebookLM") {
@@ -795,17 +795,13 @@ function agentBadgeLabel(session) {
   const name = agentDisplayName(session);
   const labels = {
     "Antigravity": "AG",
-    "Antigravity Web": "AG",
     "ChatGPT": "GPT",
-    "ChatGPT Web": "GPT",
     "Claude Code": "CC",
-    "Claude Desktop": "CL",
-    "Claude Web": "CL",
-    "Codex App": "CX",
+    "Claude": "CL",
+    "Codex": "CX",
     "Copilot": "CP",
     "DeepSeek": "DS",
     "Gemini": "GM",
-    "Gemini Web": "GM",
     "Genspark": "GS",
     "Grok": "GK",
     "NotebookLM": "NB",
@@ -813,6 +809,28 @@ function agentBadgeLabel(session) {
   };
 
   return labels[name] || clampText(name, 3).toUpperCase();
+}
+
+function agentAccentClass(session) {
+  const name = agentDisplayName(session);
+
+  if (name === "Codex") {
+    return "agent-codex";
+  }
+
+  if (name === "ChatGPT") {
+    return "agent-chatgpt";
+  }
+
+  if (name === "Claude Code") {
+    return "agent-claude-code";
+  }
+
+  if (name === "Claude") {
+    return "agent-claude";
+  }
+
+  return "";
 }
 
 function buildAgentOrdinals(sessions) {
@@ -869,6 +887,10 @@ function sessionCacheKey(session) {
   );
 }
 
+function sessionTopicKey(session) {
+  return normalizeText(session.taskTitle || session.summary || "");
+}
+
 function stabilizeSnapshot(snapshot) {
   const now = Date.now();
   const incomingSessions = snapshot?.sessions || [];
@@ -884,6 +906,17 @@ function stabilizeSnapshot(snapshot) {
     const key = sessionCacheKey(session);
     const previous = sessionContinuityCache.get(key);
     const effectiveStatusKey = sessionEffectiveStatusKey({ ...(previous?.session || {}), ...session });
+    const topicKey = sessionTopicKey(session);
+    const previousTopicKey = previous?.session?.__topicKey || "";
+    const topicStableSince = topicKey && topicKey === previousTopicKey
+      ? previous?.session?.__topicStableSince || previous?.topicStableSince || now
+      : now;
+
+    if (hiddenSessionIds.has(session.id) && (effectiveStatusKey === "running" || effectiveStatusKey === "viewing")) {
+      hiddenSessionIds.delete(session.id);
+      saveHiddenSessionIds();
+    }
+
     const lastRunningAt =
       effectiveStatusKey === "running"
         ? now
@@ -904,6 +937,8 @@ function stabilizeSnapshot(snapshot) {
       __lastSeenAt: now,
       __lastRunningAt: lastRunningAt,
       __lastVisibleAt: lastVisibleAt,
+      __topicKey: topicKey,
+      __topicStableSince: topicStableSince,
     };
 
     stabilizedSessions.push(stabilized);
@@ -912,6 +947,7 @@ function stabilizeSnapshot(snapshot) {
       lastSeenAt: now,
       lastRunningAt,
       lastVisibleAt,
+      topicStableSince,
       missingSince: null,
     });
   }
@@ -922,9 +958,14 @@ function stabilizeSnapshot(snapshot) {
     }
 
     const missingSince = previous.missingSince || now;
-    const graceMs = sessionEffectiveStatusKey(previous.session) === "running"
+    let graceMs = sessionEffectiveStatusKey(previous.session) === "running"
       ? RUNNING_SNAPSHOT_GRACE_MS
       : SNAPSHOT_GRACE_MS;
+
+    if (previous.session?.sourceType === "browser") {
+      graceMs = BROWSER_SNAPSHOT_GRACE_MS;
+    }
+
     if (now - missingSince > graceMs) {
       continue;
     }
@@ -937,6 +978,8 @@ function stabilizeSnapshot(snapshot) {
       __lastSeenAt: previous.lastSeenAt || now,
       __lastRunningAt: previous.lastRunningAt || previous.session?.__lastRunningAt || null,
       __lastVisibleAt: previous.lastVisibleAt || previous.session?.__lastVisibleAt || null,
+      __topicKey: previous.session?.__topicKey || sessionTopicKey(previous.session),
+      __topicStableSince: previous.session?.__topicStableSince || previous.topicStableSince || now,
     };
 
     stabilizedSessions.push(retained);
@@ -945,6 +988,7 @@ function stabilizeSnapshot(snapshot) {
       lastSeenAt: previous.lastSeenAt || now,
       lastRunningAt: previous.lastRunningAt || previous.session?.__lastRunningAt || null,
       lastVisibleAt: previous.lastVisibleAt || previous.session?.__lastVisibleAt || null,
+      topicStableSince: previous.session?.__topicStableSince || previous.topicStableSince || now,
       missingSince,
     });
   }
@@ -971,14 +1015,20 @@ function sourceChipLabel(session) {
 }
 
 function agentVariantLabel(session) {
+  if (session.sourceType === "browser") {
+    return "Web";
+  }
+
+  if (session.sourceType === "cli") {
+    return "Code";
+  }
+
   if (session.provider === "Claude") {
-    if (session.sourceType === "cli") {
-      return "Code";
-    }
-    if (session.sourceType === "browser") {
-      return "Web";
-    }
-    return "Desktop";
+    return "App";
+  }
+
+  if (session.sourceType === "desktop") {
+    return "App";
   }
 
   return "";
@@ -1011,29 +1061,20 @@ function shouldKeepVisibleInCompact(session) {
   return typeof lastVisibleAt === "number" && Date.now() - lastVisibleAt < COMPACT_VISIBILITY_GRACE_MS;
 }
 
-function effectiveCompactMode() {
-  return compactMode || window.innerWidth <= AUTO_COMPACT_WIDTH;
+function topicNeedsReview(session) {
+  if (session.sourceType !== "browser" || isStaleSession(session)) {
+    return false;
+  }
+
+  if (!session.__topicStableSince || !session.__topicKey) {
+    return false;
+  }
+
+  return Date.now() - session.__topicStableSince >= TOPIC_REVIEW_MS;
 }
 
-function cardDensityLevel(sessions) {
-  const count = sessions.length;
-  if (effectiveCompactMode()) {
-    if (count >= 8) {
-      return "tight";
-    }
-    if (count >= 5) {
-      return "dense";
-    }
-    return "normal";
-  }
-
-  if (count >= 10) {
-    return "tight";
-  }
-  if (count >= 7) {
-    return "dense";
-  }
-  return "normal";
+function effectiveCompactMode() {
+  return compactMode || window.innerWidth <= AUTO_COMPACT_WIDTH;
 }
 
 function resizeWindowForCompact(enabled) {
@@ -1289,8 +1330,11 @@ function sortSessionsByFreshness(sessions) {
 }
 
 function loadHiddenSessionIds() {
-  window.localStorage.removeItem(STORAGE_KEY);
-  return new Set();
+  try {
+    return new Set(JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "[]"));
+  } catch {
+    return new Set();
+  }
 }
 
 function loadViewMode() {
@@ -1312,7 +1356,7 @@ function loadCompactMode() {
 }
 
 function saveHiddenSessionIds() {
-  window.localStorage.removeItem(STORAGE_KEY);
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify([...hiddenSessionIds]));
 }
 
 function saveViewMode() {
@@ -1724,14 +1768,60 @@ function renderStaleTray(sessions) {
   staleTray.append(title, list);
 }
 
+function renderArchiveTray(snapshot) {
+  if (!archiveTray) {
+    return;
+  }
+
+  archiveTray.innerHTML = "";
+
+  if (effectiveCompactMode()) {
+    archiveTray.hidden = true;
+    return;
+  }
+
+  const archivedSessions = sortSessionsByFreshness(
+    (snapshot?.sessions || []).filter((session) => hiddenSessionIds.has(session.id)),
+  );
+
+  if (!archivedSessions.length) {
+    archiveTray.hidden = true;
+    return;
+  }
+
+  archiveTray.hidden = false;
+
+  const title = document.createElement("p");
+  title.className = "hidden-tray-title";
+  title.textContent = `アーカイブ中のAIが ${archivedSessions.length} 件あります`;
+
+  const list = document.createElement("div");
+  list.className = "hidden-tray-list";
+
+  for (const session of archivedSessions) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "hidden-chip";
+    item.textContent = `${agentDisplayName(session)} ・ ${summarizeRequestedTask(session)} を戻す`;
+    item.title = cardHoverDetail(session);
+    item.addEventListener("click", () => {
+      hiddenSessionIds.delete(session.id);
+      saveHiddenSessionIds();
+      rerender();
+    });
+    list.append(item);
+  }
+
+  archiveTray.append(title, list);
+}
+
 function renderCards(sessions, speciesBySessionId, agentOrdinals) {
   cardsRoot.innerHTML = "";
   const compact = effectiveCompactMode();
-  cardsRoot.dataset.density = cardDensityLevel(sessions);
-  cardsRoot.dataset.count = String(sessions.length);
+  cardsRoot.removeAttribute("data-density");
+  cardsRoot.removeAttribute("data-count");
 
   if (!sessions.length) {
-    cardsRoot.dataset.density = "normal";
     const empty = document.createElement("article");
     empty.className = "empty-card";
     empty.textContent = "この部屋には、今その条件のAIはいません。";
@@ -1762,19 +1852,17 @@ function renderCards(sessions, speciesBySessionId, agentOrdinals) {
     node.dataset.stale = stale ? "true" : "false";
     node.dataset.species = species;
     node.classList.add(meta.className);
+    const accentClass = agentAccentClass(session);
+    if (accentClass) {
+      node.classList.add(accentClass);
+    }
     const hoverDetail = cardHoverDetail(session);
-    node.title = hoverDetail;
+    node.title = compact ? "" : hoverDetail;
 
-    node.querySelector(".resident-label").textContent = agentBadgeLabel(session);
+    node.querySelector(".resident-label").textContent = agentVariantLabel(session) || agentBadgeLabel(session);
     node.querySelector(".provider").textContent = agentName;
     const variantChip = node.querySelector(".variant-chip");
-    const variantLabel = agentVariantLabel(session);
-    if (variantLabel) {
-      variantChip.hidden = false;
-      variantChip.textContent = variantLabel;
-    } else {
-      variantChip.hidden = true;
-    }
+    variantChip.hidden = true;
     const projectChip = node.querySelector(".project-chip");
     if (project?.name) {
       projectChip.hidden = false;
@@ -1782,6 +1870,14 @@ function renderCards(sessions, speciesBySessionId, agentOrdinals) {
       projectChip.title = session.workspace || session.url || project.name;
     } else {
       projectChip.hidden = true;
+    }
+    const topicChip = node.querySelector(".topic-chip");
+    if (topicNeedsReview(session)) {
+      topicChip.hidden = false;
+      topicChip.textContent = "話題見直し";
+      topicChip.title = "同じ題名のまま長く開いているので、今の話題と少しズレているかもしれません。";
+    } else {
+      topicChip.hidden = true;
     }
     const sourceChip = node.querySelector(".source-chip");
     const sourceLabel = sourceChipLabel(session);
@@ -1793,11 +1889,11 @@ function renderCards(sessions, speciesBySessionId, agentOrdinals) {
       sourceChip.hidden = true;
     }
     node.querySelector(".task-title").textContent = title;
-    node.querySelector(".task-title").title = normalizeText(session.taskTitle) || title;
+    node.querySelector(".task-title").title = compact ? "" : normalizeText(session.taskTitle) || title;
     node.querySelector(".summary").textContent = summary;
-    node.querySelector(".summary").title = summaryDetail;
-    node.querySelector(".resident-avatar").title = hoverDetail;
-    node.querySelector(".speech-card").title = hoverDetail;
+    node.querySelector(".summary").title = compact ? "" : summaryDetail;
+    node.querySelector(".resident-avatar").title = "";
+    node.querySelector(".speech-card").title = "";
 
     const pill = node.querySelector(".status-pill");
     pill.textContent = stale ? "30分放置" : effectiveStatusLabel;
@@ -1867,42 +1963,41 @@ function renderCards(sessions, speciesBySessionId, agentOrdinals) {
     closeButton.hidden = false;
     closeButton.textContent = "×";
 
-    if (!canCloseSession(session)) {
-      closeButton.disabled = true;
-      closeButton.dataset.disabledState = "unsupported";
-      closeButton.title = "このAIはここから終了できません";
-      closeButton.setAttribute("aria-label", "このAIはここから終了できません");
-    } else if (effectiveStatusKey === "running") {
+    if (effectiveStatusKey === "running") {
       closeButton.disabled = true;
       closeButton.dataset.disabledState = "running";
-      closeButton.title = "作業中は終了できません";
-      closeButton.setAttribute("aria-label", "作業中は終了できません");
+      closeButton.title = "作業中はアーカイブできません";
+      closeButton.setAttribute("aria-label", "作業中はアーカイブできません");
     } else {
       closeButton.disabled = false;
       closeButton.dataset.disabledState = "ready";
-      closeButton.title = closeButtonLabel(session);
-      closeButton.setAttribute("aria-label", closeButtonLabel(session));
+      const browserArchive = session.sourceType === "browser" && canCloseSession(session);
+      closeButton.title = browserArchive ? "アーカイブしてタブを閉じる" : "アーカイブ";
+      closeButton.setAttribute("aria-label", browserArchive ? "アーカイブしてタブを閉じる" : "アーカイブ");
       closeButton.addEventListener("click", async () => {
         closeButton.disabled = true;
-        closeButton.textContent = "…";
-        try {
-          await closeSession(session);
-        } catch {
-          closeButton.textContent = "×";
-          closeButton.disabled = false;
-          closeButton.dataset.disabledState = "ready";
-          pushNotice("閉じられませんでした", `${decoratedAgentName(session, agentOrdinals)} を閉じられませんでした。`, "warning");
-          renderNoticeFeed();
-          return;
+
+        if (browserArchive) {
+          try {
+            await closeSession(session);
+          } catch {
+            closeButton.disabled = false;
+            pushNotice("閉じられませんでした", `${decoratedAgentName(session, agentOrdinals)} のタブを閉じられませんでした。`, "warning");
+            renderNoticeFeed();
+            return;
+          }
         }
 
-        removeSessionFromView(session);
-        void refresh();
-        setTimeout(() => {
-          closeButton.disabled = false;
-          closeButton.textContent = "×";
-          closeButton.dataset.disabledState = "ready";
-        }, 1400);
+        hiddenSessionIds.add(session.id);
+        saveHiddenSessionIds();
+        if (browserArchive) {
+          removeSessionFromView(session);
+          pushNotice("アーカイブして閉じました", `${decoratedAgentName(session, agentOrdinals)} のタブを閉じました。`, "info");
+        } else {
+          pushNotice("アーカイブしました", `${decoratedAgentName(session, agentOrdinals)} を一覧から外しました。`, "info");
+          rerender();
+        }
+        renderNoticeFeed();
       });
     }
 
@@ -1950,6 +2045,10 @@ function renderScene(sessions, speciesBySessionId, agentOrdinals) {
 
     const node = sceneTemplate.content.firstElementChild.cloneNode(true);
     node.classList.add(meta.className);
+    const accentClass = agentAccentClass(session);
+    if (accentClass) {
+      node.classList.add(accentClass);
+    }
     node.dataset.activity = activity.key;
     node.dataset.mood = mood;
     node.dataset.state = sessionEffectiveStatusKey(session);
@@ -1982,6 +2081,7 @@ function rerender() {
   syncRuntimeBadge();
   syncNotificationButton();
   renderStats(displayedSessions);
+  renderArchiveTray(latestSnapshot);
   renderStaleTray(visibleSessions);
   renderNoticeFeed();
   renderWarnings(latestSnapshot?.warnings || []);

@@ -93,10 +93,10 @@ function buildStatus(now, lastActivityAt, summary, activeText = "") {
   const activeRecently = lastActivityAt && now - lastActivityAt < RUNNING_ACTIVITY_MS;
   const activeHint = hasActiveLanguage(activeText);
   const frontmostThinking = summary.frontmost && lastActivityAt && now - lastActivityAt < FRONTMOST_THINKING_MS;
-  const cpuActive = summary.cpu >= STRONG_CPU_THRESHOLD;
+  const cpuActive = summary.cpu >= STRONG_CPU_THRESHOLD && (summary.frontmost || activeHint);
   const warmFrontmost = summary.frontmost && (frontmostThinking || summary.cpu >= SOFT_CPU_THRESHOLD || activeHint);
-  const backgroundContinuing = (activeRecently || activeHint) && summary.cpu >= SOFT_CPU_THRESHOLD;
-  const hintedRunning = activeHint && summary.processCount > 0;
+  const backgroundContinuing = activeHint && activeRecently && summary.cpu >= SOFT_CPU_THRESHOLD;
+  const hintedRunning = activeHint && (summary.frontmost || activeRecently);
   const running = cpuActive || warmFrontmost || backgroundContinuing || hintedRunning;
   return running
     ? { statusKey: "running", statusLabel: "作業中" }
@@ -130,9 +130,10 @@ function buildSession({ id, source, sessionData, processSummary, visibleApp, isP
   ]
     .filter(Boolean)
     .join(" ");
+  const activeHint = hasActiveLanguage(activeText);
 
   const status =
-    isPrimary || hasActiveLanguage(activeText) || (recentActivityAt && Date.now() - recentActivityAt < RUNNING_ACTIVITY_MS)
+    isPrimary
       ? buildStatus(Date.now(), recentActivityAt, processSummary, activeText)
       : { statusKey: "waiting", statusLabel: "待機中" };
 
@@ -155,6 +156,7 @@ function buildSession({ id, source, sessionData, processSummary, visibleApp, isP
     statusLabel: status.statusLabel,
     startedAt: sessionData.createdAt || processSummary.startedAt || null,
     lastActiveAt: lastActivityAt,
+    activeHint: isPrimary ? activeHint : false,
     cpu: processSummary.cpu || null,
     frontmost: processSummary.frontmost,
   };
@@ -219,6 +221,7 @@ export async function collectClaudeSessions(systemState) {
           statusLabel: desktopSummary.cpu >= STRONG_CPU_THRESHOLD ? "作業中" : "待機中",
           startedAt: desktopSummary.startedAt,
           lastActiveAt: desktopSummary.startedAt,
+          activeHint: false,
           cpu: desktopSummary.cpu,
           frontmost: desktopSummary.frontmost,
         });
@@ -268,6 +271,7 @@ export async function collectClaudeSessions(systemState) {
           statusLabel: cliSummary.cpu >= STRONG_CPU_THRESHOLD ? "作業中" : "待機中",
           startedAt: cliSummary.startedAt,
           lastActiveAt: cliSummary.startedAt,
+          activeHint: false,
           cpu: cliSummary.cpu,
           frontmost: false,
         });
