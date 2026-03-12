@@ -24,10 +24,11 @@ const COMPACT_STORAGE_KEY = "ai-workboard-compact";
 const NOTIFICATION_STORAGE_KEY = "ai-workboard-notifications";
 const STALE_MS = 30 * 60 * 1000;
 const SNAPSHOT_GRACE_MS = 24 * 1000;
-const RUNNING_SNAPSHOT_GRACE_MS = 90 * 1000;
+const RUNNING_SNAPSHOT_GRACE_MS = 3 * 60 * 1000;
+const ACTIVE_CUE_SNAPSHOT_GRACE_MS = 12 * 60 * 1000;
 const BROWSER_SNAPSHOT_GRACE_MS = 60 * 1000;
 const COMPACT_VISIBILITY_GRACE_MS = 24 * 1000;
-const ACTIVE_HINT_GRACE_MS = 2 * 60 * 1000;
+const ACTIVE_HINT_GRACE_MS = 12 * 60 * 1000;
 const TOPIC_REVIEW_MS = 25 * 60 * 1000;
 const MAX_NOTICE_ITEMS = 5;
 const SPECIES_TYPES = ["hamster", "cat", "rabbit", "bear"];
@@ -61,8 +62,10 @@ let noticeFeed = [];
 const speciesAssignments = new Map();
 const notificationSessions = new Map();
 const sessionContinuityCache = new Map();
+const sessionDisplayOrder = new Map();
 const closingSessionIds = new Set();
 let refreshInFlight = null;
+let nextSessionDisplayOrder = 1;
 
 function setRefreshButtonState(isLoading) {
   if (!refreshButton) {
@@ -434,7 +437,11 @@ function sessionEffectiveStatusKey(session) {
   const activityMs = sessionActivityMs(session);
   const warmActivity = typeof activityMs === "number" && now - activityMs < ACTIVE_HINT_GRACE_MS;
 
-  return session.frontmost && warmActivity ? "running" : session.statusKey;
+  if (session.frontmost) {
+    return "running";
+  }
+
+  return warmActivity ? "running" : session.statusKey;
 }
 
 function sessionEffectiveStatusLabel(session) {
@@ -482,6 +489,10 @@ function staleLabel(session) {
 }
 
 function canReopenSession(session) {
+  if (session?.canReopen === false) {
+    return false;
+  }
+
   return Boolean(session.url || session.workspace || session.appName);
 }
 
@@ -966,6 +977,10 @@ function stabilizeSnapshot(snapshot) {
       graceMs = BROWSER_SNAPSHOT_GRACE_MS;
     }
 
+    if (hasActiveStatusCue(previous.session)) {
+      graceMs = Math.max(graceMs, ACTIVE_CUE_SNAPSHOT_GRACE_MS);
+    }
+
     if (now - missingSince > graceMs) {
       continue;
     }
@@ -1305,24 +1320,47 @@ function displayUpdatedMs(session) {
   return sessionActivityMs(session) || 0;
 }
 
+function sessionSortBucket(session) {
+  if (isStaleSession(session)) {
+    return 2;
+  }
+
+  const statusKey = sessionEffectiveStatusKey(session);
+  if (statusKey === "running" || statusKey === "viewing") {
+    return 0;
+  }
+
+  return 1;
+}
+
+function rememberSessionDisplayOrder(sessions) {
+  for (const session of sessions) {
+    if (!sessionDisplayOrder.has(session.id)) {
+      sessionDisplayOrder.set(session.id, nextSessionDisplayOrder);
+      nextSessionDisplayOrder += 1;
+    }
+  }
+}
+
 function sortSessionsByFreshness(sessions) {
-  const stateOrder = {
-    running: 0,
-    viewing: 1,
-    waiting: 2,
-    idle: 3,
-  };
+  rememberSessionDisplayOrder(sessions);
 
   return [...sessions].sort((a, b) => {
+    const bucketDelta = sessionSortBucket(a) - sessionSortBucket(b);
+    if (bucketDelta !== 0) {
+      return bucketDelta;
+    }
+
+    const savedOrderDelta =
+      (sessionDisplayOrder.get(a.id) || Number.MAX_SAFE_INTEGER) -
+      (sessionDisplayOrder.get(b.id) || Number.MAX_SAFE_INTEGER);
+    if (savedOrderDelta !== 0) {
+      return savedOrderDelta;
+    }
+
     const updatedDelta = displayUpdatedMs(b) - displayUpdatedMs(a);
     if (updatedDelta !== 0) {
       return updatedDelta;
-    }
-
-    const stateDelta =
-      (stateOrder[sessionEffectiveStatusKey(a)] ?? 9) - (stateOrder[sessionEffectiveStatusKey(b)] ?? 9);
-    if (stateDelta !== 0) {
-      return stateDelta;
     }
 
     return agentDisplayName(a).localeCompare(agentDisplayName(b), "ja");

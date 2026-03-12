@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   listFilesRecursive,
   readJson,
@@ -9,6 +11,7 @@ import {
 } from "../utils.js";
 import { findProcesses, summarizeProcesses } from "./system.js";
 
+const execFileAsync = promisify(execFile);
 const CLAUDE_APP_DIR = path.join(os.homedir(), "Library", "Application Support", "Claude");
 const RUNNING_ACTIVITY_MS = 90 * 1000;
 const FRONTMOST_THINKING_MS = 6 * 60 * 1000;
@@ -16,6 +19,22 @@ const STRONG_CPU_THRESHOLD = 10;
 const SOFT_CPU_THRESHOLD = 1.5;
 const ACTIVE_STATUS_PATTERN =
   /コンテキストを自動的に圧縮しています|コンテキスト.*圧縮中|圧縮しています|圧縮中|思考中|試行中|考え中|推論中|処理中|分析中|thinking|reasoning|processing|compressing|compacting|summarizing context|summarising context|trying/i;
+
+async function appWindowCount(appName) {
+  try {
+    const { stdout } = await execFileAsync("osascript", [
+      "-e",
+      `tell application "System Events" to tell process "${appName}" to count windows`,
+    ], {
+      env: process.env,
+      timeout: 4000,
+    });
+    const value = Number(String(stdout || "").trim());
+    return Number.isFinite(value) ? value : 0;
+  } catch {
+    return 0;
+  }
+}
 
 async function loadLatestSession(rootDir, fileMatcher) {
   const files = await listFilesRecursive(rootDir, (fullPath) => fileMatcher.test(path.basename(fullPath)), 5);
@@ -103,7 +122,7 @@ function buildStatus(now, lastActivityAt, summary, activeText = "") {
     : { statusKey: "waiting", statusLabel: "待機中" };
 }
 
-function buildSession({ id, source, sessionData, processSummary, visibleApp, isPrimary }) {
+function buildSession({ id, source, sessionData, processSummary, visibleApp, isPrimary, canReopen = true }) {
   const recentActivityAt = sessionData.lastActivityAt || null;
   const lastActivityAt = recentActivityAt || sessionData.createdAt || processSummary.startedAt;
   const title = truncate(sessionData.title || "Claude のセッション", 90);
@@ -159,6 +178,7 @@ function buildSession({ id, source, sessionData, processSummary, visibleApp, isP
     activeHint: isPrimary ? activeHint : false,
     cpu: processSummary.cpu || null,
     frontmost: processSummary.frontmost,
+    canReopen,
   };
 }
 
@@ -184,6 +204,8 @@ export async function collectClaudeSessions(systemState) {
 
   if (desktopRunning) {
     try {
+      const desktopWindowCount = await appWindowCount("Claude");
+      const desktopCanReopen = desktopWindowCount > 0;
       const desktopSessions = await loadRecentSessions(
         path.join(CLAUDE_APP_DIR, "local-agent-mode-sessions"),
         /^local_.*\.json$/,
@@ -203,6 +225,7 @@ export async function collectClaudeSessions(systemState) {
               },
               visibleApp: "Claude",
               isPrimary: index === 0,
+              canReopen: desktopCanReopen,
             }),
           ),
         );
@@ -224,6 +247,7 @@ export async function collectClaudeSessions(systemState) {
           activeHint: false,
           cpu: desktopSummary.cpu,
           frontmost: desktopSummary.frontmost,
+          canReopen: desktopCanReopen,
         });
       }
     } catch (error) {

@@ -3,3 +3,9 @@ dist/
 .DS_Store
 data/session-store.json
 npm-debug.log*
+desktop_apps/__pycache__/
+apps/**/__pycache__/
+apps/**/.venv/
+apps/**/.build/
+apps/**/.dist/
+apps/**/test_output*/

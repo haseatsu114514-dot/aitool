@@ -1,0 +1,68 @@
+{
+  "apps": [
+    {
+      "id": "ai-workboard",
+      "name": "AI管理ツール",
+      "desktop_path": "~/Desktop/AI管理ツール.app",
+      "source_dir": ".",
+      "tech": "Electron + Node.js",
+      "build": {
+        "cwd": ".",
+        "command": "npm run desktop:build"
+      },
+      "run": {
+        "cwd": ".",
+        "command": "npm run desktop"
+      },
+      "notes": "この ai-workboard リポジトリ自身が AI管理ツール のソースです。"
+    },
+    {
+      "id": "clipboard-menu",
+      "name": "Clipboard Menu",
+      "desktop_path": "~/Desktop/Clipboard Menu.app",
+      "source_dir": "apps/clipboard-menu-mac",
+      "tech": "Swift Package Manager",
+      "build": {
+        "cwd": "apps/clipboard-menu-mac",
+        "command": "./update_desktop_app.command"
+      },
+      "run": {
+        "cwd": ".",
+        "command": "open \"$HOME/Desktop/Clipboard Menu.app\""
+      },
+      "notes": "更新スクリプトがデスクトップの .app を差し替えて再署名します。"
+    },
+    {
+      "id": "media-url-saver",
+      "name": "Media URL Saver",
+      "desktop_path": "~/Desktop/Media URL Saver.app",
+      "source_dir": "apps/youtube-url-saver",
+      "tech": "Python + Tkinter",
+      "build": {
+        "cwd": "apps/youtube-url-saver",
+        "command": "python3 build_desktop_app.py"
+      },
+      "run": {
+        "cwd": "apps/youtube-url-saver",
+        "command": "./start_app.command"
+      },
+      "notes": "yt-dlp を使うローカル GUI アプリ。旧名 YouTube URL Saver の名残があります。"
+    },
+    {
+      "id": "voice-input",
+      "name": "Voice Input",
+      "desktop_path": "~/Desktop/Voice Input.app",
+      "source_dir": "../voice",
+      "tech": "Python + SwiftUI",
+      "build": {
+        "cwd": "../voice",
+        "command": "./build_mac_app.command"
+      },
+      "run": {
+        "cwd": "../voice",
+        "command": "./start_mic_button.command"
+      },
+      "notes": "Voice Input はまだ別 Git リポジトリです。いまは ai-workboard から外部参照しています。"
+    }
+  ]
+}

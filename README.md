@@ -53,3 +53,14 @@ open "dist/AI Workboard-darwin-arm64/AI Workboard.app"
 - すべてローカルで動きます。
 - 一部のアプリは内部状態を直接読めないため、状態や終了予想は推定です。
 - 履歴は `data/session-store.json` に保存します。
+
+## 他アプリ管理
+
+このリポジトリを、デスクトップにある自作アプリの管理ハブとしても使うようにしています。
+
+```bash
+cd "/Users/hasegawaatsuki/Documents/New project/ai-workboard"
+python3 desktop_apps/manage.py list
+```
+
+詳細は `desktop_apps/README.md` を参照してください。

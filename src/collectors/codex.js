@@ -1,16 +1,50 @@
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { runCommand, parseJsonOutput, firstMeaningfulLine, truncate, normalizeWhitespace } from "../utils.js";
 import { findProcesses, summarizeProcesses } from "./system.js";
 
-const CODEX_DB = path.join(os.homedir(), ".codex", "state_5.sqlite");
+const CODEX_DIR = path.join(os.homedir(), ".codex");
+const CODEX_DB = path.join(CODEX_DIR, "state_5.sqlite");
 const VERY_RECENT_THREAD_MS = 5 * 60 * 1000;
 const RECENT_THREAD_MS = 20 * 60 * 1000;
 const RUNNING_ACTIVITY_MS = 90 * 1000;
 const LOG_ACTIVITY_MS = 2 * 60 * 1000;
+const UPDATED_ACTIVITY_MS = 2 * 60 * 1000;
+const ACTIVE_THREAD_WINDOW_MS = 10 * 60 * 1000;
 const MIN_PROGRESS_GAP_MS = 20 * 1000;
+const RUNNING_CPU_THRESHOLD = 24;
 const ACTIVE_STATUS_PATTERN =
   /コンテキストを自動的に圧縮しています|コンテキスト.*圧縮中|圧縮しています|圧縮中|思考中|試行中|考え中|推論中|処理中|分析中|thinking|reasoning|processing|compressing|compacting|summarizing context|summarising context|trying/i;
+
+async function resolveCodexDbPath() {
+  try {
+    const entries = await fs.readdir(CODEX_DIR, { withFileTypes: true });
+    const candidates = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => {
+        const match = entry.name.match(/^state_(\d+)\.sqlite$/);
+        if (!match) {
+          return null;
+        }
+
+        return {
+          name: entry.name,
+          version: Number(match[1]),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.version - a.version);
+
+    if (candidates.length) {
+      return path.join(CODEX_DIR, candidates[0].name);
+    }
+  } catch {
+    // fall back to the older fixed path below
+  }
+
+  return CODEX_DB;
+}
 
 function hasMeaningfulProgress(threadUpdatedAt, threadCreatedAt) {
   if (!threadUpdatedAt) {
@@ -32,12 +66,28 @@ function hasActiveLanguage(...values) {
   return ACTIVE_STATUS_PATTERN.test(values.filter(Boolean).join(" "));
 }
 
+function latestActivityAt(threadUpdatedAt, recentLogAt) {
+  return Math.max(threadUpdatedAt || 0, recentLogAt || 0) || null;
+}
+
+function updatedRecently(threadUpdatedAt, threadCreatedAt, now) {
+  return hasMeaningfulProgress(threadUpdatedAt, threadCreatedAt) && now - threadUpdatedAt < UPDATED_ACTIVITY_MS;
+}
+
 function buildState(now, threadUpdatedAt, threadCreatedAt, summary, activeText = "", recentLogAt = null) {
   const activeRecently = hasRecentProgress(threadUpdatedAt, threadCreatedAt, now);
+  const threadUpdatedRecently = updatedRecently(threadUpdatedAt, threadCreatedAt, now);
   const activeHint = hasActiveLanguage(activeText);
   const logActive = recentLogAt && now - recentLogAt < RUNNING_ACTIVITY_MS;
-  const hintedRunning = activeHint && summary.frontmost && activeRecently;
-  const running = Boolean(logActive || hintedRunning);
+  const cpuBusy = (summary.cpu || 0) >= RUNNING_CPU_THRESHOLD;
+  const freshActivity = latestActivityAt(threadUpdatedAt, recentLogAt);
+  const busyCurrentThread =
+    Boolean(freshActivity) &&
+    now - freshActivity < ACTIVE_THREAD_WINDOW_MS &&
+    threadUpdatedRecently &&
+    cpuBusy;
+  const hintedRunning = activeHint && (summary.frontmost || activeRecently || cpuBusy);
+  const running = Boolean(logActive || hintedRunning || busyCurrentThread);
 
   return running
     ? { statusKey: "running", statusLabel: "作業中" }
@@ -60,7 +110,13 @@ function pickRelevantThreads(threads, recentLogsByThreadId) {
     }
 
     const recentLogAt = recentLogsByThreadId.get(thread.id);
-    if (recentLogAt && nowMs - recentLogAt < LOG_ACTIVITY_MS) {
+    const updatedAtMs = (thread.updated_at || thread.created_at || 0) * 1000;
+    const createdAtMs = thread.created_at ? thread.created_at * 1000 : null;
+
+    if (
+      (recentLogAt && nowMs - recentLogAt < LOG_ACTIVITY_MS) ||
+      updatedRecently(updatedAtMs, createdAtMs, nowMs)
+    ) {
       relevant.push(thread);
       seenIds.add(thread.id);
     }
@@ -91,7 +147,7 @@ function pickRelevantThreads(threads, recentLogsByThreadId) {
   return threads.slice(0, 1);
 }
 
-async function loadRecentLogsByThreadId() {
+async function loadRecentLogsByThreadId(dbPath) {
   const query = [
     "select thread_id, max(ts) as last_log_ts",
     "from logs",
@@ -101,7 +157,7 @@ async function loadRecentLogsByThreadId() {
     "limit 32;",
   ].join(" ");
 
-  const { stdout } = await runCommand("sqlite3", ["-json", CODEX_DB, query], {
+  const { stdout } = await runCommand("sqlite3", ["-json", dbPath, query], {
     timeout: 4000,
   });
   const rows = parseJsonOutput(stdout, []);
@@ -130,6 +186,7 @@ export async function collectCodexSessions(systemState) {
   }
 
   try {
+    const dbPath = await resolveCodexDbPath();
     const query = [
       "select id, title, cwd, created_at, updated_at",
       "from threads",
@@ -138,11 +195,11 @@ export async function collectCodexSessions(systemState) {
       "limit 8;",
     ].join(" ");
 
-    const { stdout } = await runCommand("sqlite3", ["-json", CODEX_DB, query], {
+    const { stdout } = await runCommand("sqlite3", ["-json", dbPath, query], {
       timeout: 4000,
     });
     const threads = parseJsonOutput(stdout, []);
-    const recentLogsByThreadId = await loadRecentLogsByThreadId();
+    const recentLogsByThreadId = await loadRecentLogsByThreadId(dbPath);
     const relevantThreads = pickRelevantThreads(threads, recentLogsByThreadId);
     const currentThread = relevantThreads[0];
 
@@ -184,12 +241,21 @@ export async function collectCodexSessions(systemState) {
         const activeText = [taskTitle, summaryLine].filter(Boolean).join(" ");
         const activeHint = hasActiveLanguage(activeText);
         const recentLogAt = recentLogsByThreadId.get(thread.id) || null;
+        const lastActiveAt = latestActivityAt(threadUpdatedAt, recentLogAt);
         const state =
           index === 0
             ? buildState(Date.now(), threadUpdatedAt, threadCreatedAt, summary, activeText, recentLogAt)
             : {
-                statusKey: recentLogAt && Date.now() - recentLogAt < RUNNING_ACTIVITY_MS ? "running" : "waiting",
-                statusLabel: recentLogAt && Date.now() - recentLogAt < RUNNING_ACTIVITY_MS ? "作業中" : "待機中",
+                statusKey:
+                  (recentLogAt && Date.now() - recentLogAt < RUNNING_ACTIVITY_MS) ||
+                  updatedRecently(threadUpdatedAt, threadCreatedAt, Date.now())
+                    ? "running"
+                    : "waiting",
+                statusLabel:
+                  (recentLogAt && Date.now() - recentLogAt < RUNNING_ACTIVITY_MS) ||
+                  updatedRecently(threadUpdatedAt, threadCreatedAt, Date.now())
+                    ? "作業中"
+                    : "待機中",
               };
 
         return {
@@ -205,7 +271,7 @@ export async function collectCodexSessions(systemState) {
           statusKey: state.statusKey,
           statusLabel: state.statusLabel,
           startedAt: threadCreatedAt || summary.startedAt,
-          lastActiveAt: recentLogAt || threadUpdatedAt,
+          lastActiveAt,
           activeHint: index === 0 ? activeHint : false,
           cpu: index === 0 ? summary.cpu : null,
           frontmost: index === 0 ? summary.frontmost : false,

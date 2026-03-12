@@ -15,6 +15,7 @@ const PUBLIC_DIR = path.join(ROOT_DIR, "public");
 const DEFAULT_DATA_DIR = path.join(ROOT_DIR, "data");
 const DEFAULT_PORT = Number(process.env.PORT || 4315);
 const CHROMIUM_BROWSERS = new Set(["Google Chrome", "Arc"]);
+const KNOWN_BROWSERS = ["Google Chrome", "Arc", "Safari"];
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -219,6 +220,16 @@ async function focusExistingBrowserTarget(appName, targetUrl, windowIndex = null
   return false;
 }
 
+async function focusAnyBrowserTarget(targetUrl) {
+  for (const appName of KNOWN_BROWSERS) {
+    if (await focusExistingBrowserTarget(appName, targetUrl)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function activateApplication(appName) {
   try {
     return (await runOsascript([
@@ -229,6 +240,45 @@ async function activateApplication(appName) {
       "return \"hit\"",
       "end tell",
     ], { TARGET_APP: appName })) === "hit";
+  } catch {
+    return false;
+  }
+}
+
+async function reopenApplication(appName) {
+  try {
+    return (await runOsascript([
+      'set targetApp to system attribute "TARGET_APP"',
+      "tell application targetApp",
+      "if not running then return \"miss\"",
+      "reopen",
+      "activate",
+      "return \"hit\"",
+      "end tell",
+    ], { TARGET_APP: appName })) === "hit";
+  } catch {
+    return false;
+  }
+}
+
+async function raiseApplicationWindow(appName) {
+  try {
+    await runOsascript([
+      'set targetApp to system attribute "TARGET_APP"',
+      'tell application "System Events"',
+      "if not (exists process targetApp) then return \"miss\"",
+      "tell process targetApp",
+      "set frontmost to true",
+      "if (count of windows) > 0 then",
+      "try",
+      "perform action \"AXRaise\" of front window",
+      "end try",
+      "end if",
+      "end tell",
+      "end tell",
+      "return \"hit\"",
+    ], { TARGET_APP: appName });
+    return true;
   } catch {
     return false;
   }
@@ -413,9 +463,17 @@ async function reopenSession(payload) {
       return;
     }
 
+    if (await focusAnyBrowserTarget(payload.url)) {
+      return;
+    }
+
     if (payload.appName) {
       if (await activateApplication(payload.appName)) {
         return;
+      }
+
+      if (payload.sourceType === "browser") {
+        throw new Error("existing browser tab not found");
       }
 
       await execFileAsync("open", ["-a", payload.appName], { env: process.env });
@@ -427,11 +485,18 @@ async function reopenSession(payload) {
   }
 
   if (payload?.sourceType === "desktop" && payload?.appName) {
+    if (await reopenApplication(payload.appName)) {
+      await raiseApplicationWindow(payload.appName);
+      return;
+    }
+
     if (await activateApplication(payload.appName)) {
+      await raiseApplicationWindow(payload.appName);
       return;
     }
 
     await execFileAsync("open", ["-a", payload.appName], { env: process.env });
+    await raiseApplicationWindow(payload.appName);
     return;
   }
 
